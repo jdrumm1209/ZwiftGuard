@@ -246,7 +246,8 @@ function deviceFlows(d){
 function transportLine(d){
   if(d.source==="ble") return "BLE \\u00b7 MAC "+esc(d.address);
   if(d.source==="ant") return "ANT+ \\u00b7 device ID "+esc(d.address);
-  return "LAN \\u00b7 IP "+esc(d.address)+(d.mac?" \\u00b7 MAC "+esc(d.mac):"");
+  const ports=(d.services||[]).filter(s=>String(s).startsWith("tcp:")).map(s=>String(s).slice(4)).join(",");
+  return "LAN \\u00b7 IP "+esc(d.address)+(d.mac?" \\u00b7 MAC "+esc(d.mac):"")+(ports?" \\u00b7 tcp "+ports:"");
 }
 function textEl(x,y,cls,str,anchor){
   return `<text class="${cls}" x="${x}" y="${y}"${anchor?` text-anchor="${anchor}"`:""}>${str}</text>`;
@@ -364,10 +365,11 @@ function renderRider(s){
   // location + clocks
   tz = r.timezone || loc.timezone || null;
   const cityCfg=[r.city,r.country].filter(Boolean).join(", ");
-  const cityIp=[loc.city,loc.country].filter(Boolean).join(", ");
+  const cityIp=[loc.city,loc.region,loc.country].filter(Boolean).join(", ");
   const where=cityCfg||cityIp;
   document.getElementById("rWhere").textContent =
-    where ? where+(cityCfg?"":" (via IP)") : (s.now?"location unknown":"detecting location\\u2026");
+    where ? where+(cityCfg?"":" (via IP \\u00b7 approximate)")
+          : (s.now?"location unknown":"detecting location\\u2026");
   const ipbits=[];
   if(loc.public_ip) ipbits.push("public "+loc.public_ip);
   if(s.local_ips&&s.local_ips[0]) ipbits.push("LAN "+s.local_ips[0]);

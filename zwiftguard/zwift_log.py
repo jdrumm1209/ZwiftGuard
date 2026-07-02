@@ -29,17 +29,31 @@ from .config import default_zwift_log_path
 from .engine import IntegrityEngine
 
 # (kind, compiled regex). Named groups: name, id (both optional per pattern).
-# Order matters: more specific patterns first.
+# Order matters: exact formats verified against a real 2026 PC-client log
+# come first, broad fallbacks for other client versions last.
 _PATTERNS: list[tuple[str, re.Pattern]] = [
-    # ANT+ pairing/registration lines, e.g. "ANT : ... device 12345 ..."
-    ("ant", re.compile(r"ant\S*\s*[:\]].*?(?:device|dev|id)\D{0,10}(?P<id>\d{3,6})", re.IGNORECASE)),
-    # BLE pairing/connection lines, e.g. "BLE : Connecting to KICKR CORE 1234"
-    ("ble", re.compile(r"ble\s*[:\]].*?(?:connect(?:ing|ed)?|pair(?:ing|ed)?|found sensor|saved device)\s*(?:to|with|:)?\s*(?P<name>[A-Za-z0-9][\w\s\.\-#]{2,40})", re.IGNORECASE)),
-    # Generic pairing lines: "Paired POWER device: KICKR CORE 1234"
-    ("generic", re.compile(r"paired.*?(?:device|sensor)\s*:?\s*(?P<name>[A-Za-z0-9][\w\s\.\-#]{2,40})", re.IGNORECASE)),
-    ("generic", re.compile(r"(?:power source|controllable trainer|heart rate monitor)\s*(?:set|is|:)\s*(?P<name>[A-Za-z0-9][\w\s\.\-#]{2,40})", re.IGNORECASE)),
-    # ANT+ role pairing with explicit ID, e.g. "paired PWR 12345"
-    ("ant", re.compile(r"paired\s+(?P<name>power|pwr|hr|heart\s*rate|cadence|speed|fe-?c|controllable)\b\D{0,15}(?P<id>\d{3,6})", re.IGNORECASE)),
+    # "[BLE] Device selected for role (device: HR Strap 43692, role: HR)"
+    ("ble", re.compile(r"\[BLE\]\s*Device selected for role\s*\(device:\s*(?P<name>[^,)]+),", re.IGNORECASE)),
+    # '[BLE] Device: "HR Strap 43692" has new connection status: connected'
+    ("ble", re.compile(r"Device:\s*\"(?P<name>[^\"]+)\"\s*has new connection status:\s*connected", re.IGNORECASE)),
+    # '[BLE] WFTNPDeviceManager::Pairing device "Wahoo KICKR 6BA3 93"'
+    ("ble", re.compile(r"WFTNPDeviceManager::Pairing device\s*\"(?P<name>[^\"]+)\"", re.IGNORECASE)),
+    # 'CreateWFTNPDevice for "Wahoo KICKR 6BA3"' -> direct-connect (LAN) trainer
+    ("tnp", re.compile(r"CreateWFTNPDevice for\s*\"(?P<name>[^\"]+?)(?:\._wahoo[\w\-\.]*)?\"", re.IGNORECASE)),
+    # '[BLE] WFTNPDeviceManager: connecting to LAN device "Wahoo KICKR 6BA3"'
+    ("tnp", re.compile(r"WFTNPDeviceManager:\s*connecting to LAN device\s*\"(?P<name>[^\"]+)\"", re.IGNORECASE)),
+    # "[ANT_IMPORTANT] Pairing deviceID 43692 to channel 1, ..."
+    ("ant", re.compile(r"\[ANT[_A-Z]*\]\s*Pairing deviceID\s*(?P<id>\d{2,7})\s*to channel\s*(?P<name>\d+)", re.IGNORECASE)),
+    # "[ANT] dID 1141667 MFG 32 Model 1" (full ANT device identification)
+    ("ant", re.compile(r"\[ANT\]\s*dID\s*(?P<id>\d{3,10})\b", re.IGNORECASE)),
+    # "POWER SOURCE: Interval Stats: device = Wahoo KICKR 6BA3 93, count = ..."
+    ("generic", re.compile(r"(?:POWER SOURCE|CADENCE|HEART RATE):\s*Interval Stats:\s*device\s*=\s*(?P<name>[^,]+),", re.IGNORECASE)),
+    # ---- broad fallbacks for other client versions ----
+    ("ant", re.compile(r"ant\S*\s*[:\]].*?(?:registered device|device\s*id)\D{0,6}(?P<id>\d{3,7})", re.IGNORECASE)),
+    ("ble", re.compile(r"(?<![a-z])ble\s*[:\]].*?(?:connect(?:ing|ed)?|pair(?:ing|ed)?|found sensor|saved device)\b\s*(?:to|with|:)\s*(?P<name>[A-Za-z0-9][\w\s\.\-#]{2,40})", re.IGNORECASE)),
+    ("generic", re.compile(r"\bpaired\b.*?\b(?:device|sensor)\b\s*:?\s*(?P<name>[A-Za-z0-9][\w\s\.\-#]{2,40})", re.IGNORECASE)),
+    ("generic", re.compile(r"(?:power source|controllable trainer|heart rate monitor)\s*(?:set to|is|:)\s*(?P<name>[A-Za-z0-9][\w\s\.\-#]{2,40})", re.IGNORECASE)),
+    ("ant", re.compile(r"\bpaired\s+(?P<name>power|pwr|hr|heart\s*rate|cadence|speed|fe-?c|controllable)\b\D{0,15}(?P<id>\d{3,6})", re.IGNORECASE)),
 ]
 
 

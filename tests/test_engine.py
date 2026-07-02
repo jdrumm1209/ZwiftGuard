@@ -90,16 +90,49 @@ def test_ant_id_change() -> None:
     e.observe_zwift_pairing("ant", "PWR", "12345", "[10:00:01] ANT : device 12345 PWR")
     e.observe_zwift_pairing("ant", "PWR", "54321", "[10:31:07] ANT : device 54321 PWR")
     check("ANT power ID swap mid-session raises R10", "R10-ant-id-change" in rules_fired(e))
+    # anonymous "device" role: multiple distinct ANT ids are normal, no R10
+    e2 = make_engine()
+    e2.observe_zwift_pairing("ant", "", "1141667", "[ANT] dID 1141667 MFG 32 Model 1")
+    e2.observe_zwift_pairing("ant", "", "8170156", "[ANT] dID 8170156 MFG 1 Model 4130")
+    check("multiple anonymous ANT ids do not raise R10", "R10-ant-id-change" not in rules_fired(e2))
+
+
+def _age_ghosts(e, secs=11):
+    for nn, (n, r, t) in list(e._ghost_pending.items()):
+        e._ghost_pending[nn] = (n, r, t - secs)
 
 
 def test_ghost_pairing() -> None:
     e = make_engine()
     e.observe_zwift_pairing("ble", "Phantom Trainer", "", "[10:00:01] BLE : Connecting to Phantom Trainer")
+    _age_ghosts(e)
+    e.tick()
     check("Zwift pairing never seen on air raises R09", "R09-ghost-pairing" in rules_fired(e))
     e2 = make_engine()
     e2.observe_ble("AA:00:00:00:00:30", "Real Trainer 99", -60, [], ["1826"])
     e2.observe_zwift_pairing("ble", "Real Trainer 99", "", "[10:00:01] BLE : Connecting to Real Trainer 99")
+    _age_ghosts(e2)
+    e2.tick()
     check("Zwift pairing that matches an on-air device stays clean", "R09-ghost-pairing" not in rules_fired(e2))
+    # ANT+ device logged under Zwift's [BLE] tag with the ANT ID in the name
+    # (even when the log lines arrive in the "wrong" order)
+    e3 = make_engine()
+    e3.observe_zwift_pairing("ble", "HR Strap 43692", "", '[BLE] Device: "HR Strap 43692" ... connected')
+    e3.observe_zwift_pairing("ant", "1", "43692", "[ANT_IMPORTANT] Pairing deviceID 43692 to channel 1")
+    _age_ghosts(e3)
+    e3.tick()
+    check("ANT+ sensor aliased under [BLE] tag does not raise R09", "R09-ghost-pairing" not in rules_fired(e3))
+
+
+def test_tnp_direct_connect() -> None:
+    print("direct-connect trainer naming (TNP)")
+    e = make_engine()
+    e.observe_network_peer("192.168.8.147", 36866, mac="B4:6F:2D:00:25:E1", is_loopback=False)
+    e.observe_zwift_pairing("tnp", "Wahoo KICKR 6BA3", "", 'CreateWFTNPDevice for "Wahoo KICKR 6BA3"')
+    fp = e.devices["network:192.168.8.147"]
+    check("existing LAN device renamed to direct-connect trainer",
+          fp.name == "Wahoo KICKR 6BA3 (Direct Connect)")
+    check("tcp port recorded on LAN fingerprint", "tcp:36866" in fp.services)
 
 
 def test_post_lock_and_baseline() -> None:
@@ -151,18 +184,41 @@ def test_hash_chain() -> None:
 def test_zwift_log_parser() -> None:
     print("zwift log line parsing")
     from zwiftguard.zwift_log import _PATTERNS
+    # First five lines are verbatim from a real 2026 PC-client Log.txt.
     samples = [
-        ("[10:01:22] ANT  : Registered device 51423 as PWR", "ant"),
-        ("[10:01:25] BLE : Connecting to KICKR CORE 4C21", "ble"),
-        ("[10:01:30] Paired POWER device: Wahoo KICKR 1234", "generic"),
+        ("[15:18:50] INFO LEVEL: [BLE] Device selected for role (device: HR Strap 43692, role: HR)",
+         "ble", "HR Strap 43692"),
+        ('[15:18:50] [BLE] Device: "HR Strap 43692" has new connection status: connected',
+         "ble", "HR Strap 43692"),
+        ('[15:18:56] INFO LEVEL: [BLE] WFTNPDeviceManager::Pairing device "Wahoo KICKR 6BA3 93"',
+         "ble", "Wahoo KICKR 6BA3 93"),
+        ('[15:18:49] CreateWFTNPDevice for "Wahoo KICKR 6BA3"',
+         "tnp", "Wahoo KICKR 6BA3"),
+        ("[15:18:50] [ANT_IMPORTANT] Pairing deviceID 43692 to channel 1, mfg network 0, ant network 0",
+         "ant", None),
+        ('[15:18:56] INFO LEVEL: [BLE] WFTNPDeviceManager: connecting to LAN device "Wahoo KICKR 6BA3"',
+         "tnp", "Wahoo KICKR 6BA3"),
+        ("[15:18:50] [ANT] dID 1141667 MFG 32 Model 1", "ant", None),
+        ("[15:22:12] DEBUG LEVEL: POWER SOURCE: Interval Stats: device = Wahoo KICKR 6BA3 93, count = 64",
+         "generic", "Wahoo KICKR 6BA3 93"),
+        # noise lines that must NOT match anything
+        ("[15:18:50] [ANT] Setting Channel ID for chan 1 (device 43692120)...", None, None),
+        ("[15:18:31] ERROR LEVEL: [LOADER] Unable to load texture file Sky : milkyway.tga", None, None),
+        # broad fallbacks for other client versions
+        ("[10:01:22] ANT  : Registered device 51423 as PWR", "ant", None),
+        ("[10:01:25] BLE : Connecting to KICKR CORE 4C21", "ble", "KICKR CORE 4C21"),
+        ("[10:01:30] Paired POWER device: Wahoo KICKR 1234", "generic", "Wahoo KICKR 1234"),
     ]
-    for line, expected_kind in samples:
-        matched = None
+    for line, expected_kind, expected_name in samples:
+        matched = name = None
         for kind, pat in _PATTERNS:
-            if pat.search(line):
+            m = pat.search(line)
+            if m:
                 matched = kind
+                name = (m.groupdict().get("name") or "").strip()
                 break
-        check(f"parses: {line[:50]}", matched == expected_kind)
+        ok = matched == expected_kind and (expected_name is None or name == expected_name)
+        check(f"parses: {line[11:64]}", ok)
 
 
 def test_state_snapshot() -> None:
@@ -206,7 +262,7 @@ def main() -> int:
                test_brand_mismatch, test_rssi_anomaly, test_ant_id_change,
                test_ghost_pairing, test_post_lock_and_baseline, test_loopback_and_arp,
                test_registry_mismatch, test_hash_chain, test_zwift_log_parser,
-               test_state_snapshot, test_dashboard_server]:
+               test_tnp_direct_connect, test_state_snapshot, test_dashboard_server]:
         fn()
     print(f"\n{PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0

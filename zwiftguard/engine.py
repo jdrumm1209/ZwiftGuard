@@ -58,7 +58,10 @@ class IntegrityEngine:
         # name -> set of addresses currently believed live (for clone/identity rules)
         self._name_addresses: dict[str, set[str]] = {}
         # Zwift-log state
-        self._ant_role_ids: dict[str, str] = {}      # role ("PWR","HR","FEC") -> device id
+        self._ant_role_ids: dict[str, str] = {}      # role/channel -> device id
+        self._ant_ids: set[str] = set()              # all ANT+ device IDs seen
+        self._tnp_name: str = ""                     # direct-connect trainer name
+        self._ghost_pending: dict[str, tuple[str, str, float]] = {}  # nn -> (name, line, ts)
         self._zwift_paired_names: set[str] = set()
         # network state
         self._ip_macs: dict[str, str] = {}
@@ -169,16 +172,35 @@ class IntegrityEngine:
         self._rule_registry(fp)
 
     def observe_zwift_pairing(self, kind: str, name: str, ident: str, raw_line: str) -> None:
-        """Called by the Zwift log tailer. kind: 'ant' | 'ble' | 'generic'."""
+        """Called by the Zwift log tailer. kind: 'ant' | 'ble' | 'tnp' | 'generic'."""
         nn = _norm_name(name)
+        if kind == "tnp":
+            # Direct-connect (Wahoo TNP over LAN) trainer: give the anonymous
+            # LAN fingerprint(s) their real name.
+            self._tnp_name = name
+            for fp in self.devices.values():
+                if fp.source == "network" and fp.name.startswith("LAN device"):
+                    fp.name = f"{name} (Direct Connect)"
+            self.emit(SEV_INFO, "zwift-pairing",
+                      f"Zwift log: direct-connect trainer '{name}' (Wahoo TNP over LAN)",
+                      {"log_line": raw_line}, dedupe=f"tnp:{nn}")
+            if nn:
+                self._zwift_paired_names.add(nn)
+            return
         if kind == "ant" and ident:
             role = name or "device"
-            prev = self._ant_role_ids.get(role)
-            if prev is not None and prev != ident:
-                self.emit(SEV_ALERT, "R10-ant-id-change",
-                          f"ANT+ {role} device ID changed mid-session: {prev} -> {ident}",
-                          {"role": role, "previous_id": prev, "new_id": ident, "log_line": raw_line})
-            self._ant_role_ids[role] = ident
+            if role.isdigit():
+                role = f"channel {role}"
+            self._ant_ids.add(ident)
+            # R10 only applies when the role/channel is known: several distinct
+            # ANT sensors legitimately appear under the anonymous "device" role.
+            if role != "device":
+                prev = self._ant_role_ids.get(role)
+                if prev is not None and prev != ident:
+                    self.emit(SEV_ALERT, "R10-ant-id-change",
+                              f"ANT+ {role} device ID changed mid-session: {prev} -> {ident}",
+                              {"role": role, "previous_id": prev, "new_id": ident, "log_line": raw_line})
+                self._ant_role_ids[role] = ident
             key = f"ant:{ident}"
             if key not in self.devices:
                 fp = DeviceFingerprint(source="ant", address=str(ident), name=role)
@@ -189,12 +211,13 @@ class IntegrityEngine:
         self.emit(SEV_INFO, "zwift-pairing",
                   f"Zwift log: paired {kind} device '{name}'" + (f" id={ident}" if ident else ""),
                   {"log_line": raw_line}, dedupe=f"{kind}:{name}:{ident}")
-        # R09: Zwift paired with something we never saw advertising.
-        if kind == "ble" and nn and not self._seen_on_air(nn):
-            self.emit(SEV_WARN, "R09-ghost-pairing",
-                      f"Zwift paired with BLE device '{name}' that was never observed advertising "
-                      f"on this machine's radio (bridged via Companion app, another adapter, or emulated)",
-                      {"name": name, "log_line": raw_line}, dedupe=nn)
+        # R09 candidate: Zwift paired with something we never saw advertising.
+        # Evaluation is deferred ~10s (see tick) because log lines for the
+        # same device can arrive in any order: Zwift's device manager logs
+        # ANT+ sensors under the [BLE] tag with the ANT ID embedded in the
+        # name ("HR Strap 43692"), and those are on ANT, not BLE.
+        if kind == "ble" and nn and nn not in self._ghost_pending:
+            self._ghost_pending[nn] = (name, raw_line, now_ts())
 
     def observe_network_peer(self, ip: str, port: int, mac: str, is_loopback: bool,
                              peer_process: str | None = None) -> None:
@@ -207,13 +230,19 @@ class IntegrityEngine:
                       dedupe=f"{ip}:{port}:{peer_process}")
             return
         key = f"network:{ip}"
+        port_tag = f"tcp:{port}"
         fp = self.devices.get(key)
         if fp is None:
-            fp = DeviceFingerprint(source="network", address=ip, mac=mac or "", name=f"LAN device {ip}")
+            name = (f"{self._tnp_name} (Direct Connect)" if self._tnp_name
+                    else f"LAN device {ip}")
+            fp = DeviceFingerprint(source="network", address=ip, mac=mac or "",
+                                   name=name, services=[port_tag])
             self.devices[key] = fp
             self._on_new_device(fp)
         else:
             fp.last_seen = now_ts()
+            if port_tag not in fp.services:
+                fp.services = sorted(set(fp.services) | {port_tag})
         prev_mac = self._ip_macs.get(ip)
         if mac:
             if prev_mac and prev_mac != mac.upper():
@@ -364,7 +393,18 @@ class IntegrityEngine:
     # ------------------------------------------------------------------ ticks
 
     def tick(self) -> None:
-        """Periodic housekeeping: baseline locking."""
+        """Periodic housekeeping: baseline locking, deferred R09 evaluation."""
+        for nn in list(self._ghost_pending):
+            name, raw_line, ts = self._ghost_pending[nn]
+            if any(aid in name for aid in self._ant_ids) or self._seen_on_air(nn):
+                del self._ghost_pending[nn]        # resolved: ANT+ device or seen on air
+            elif now_ts() - ts >= 10:
+                del self._ghost_pending[nn]
+                self.emit(SEV_WARN, "R09-ghost-pairing",
+                          f"Zwift paired with BLE device '{name}' that was never observed "
+                          f"advertising on this machine's radio (bridged via Companion app, "
+                          f"another adapter, or emulated)",
+                          {"name": name, "log_line": raw_line}, dedupe=nn)
         if (not self.baseline_locked and self._first_device_ts is not None
                 and now_ts() - self._first_device_ts >= self.cfg.get("baseline_lock_seconds", 120)):
             self.baseline_locked = True
@@ -396,10 +436,11 @@ class IntegrityEngine:
         devices = []
         for fp in list(self.devices.values()):
             status = "ok"
-            ident_up = fp.address.upper()
+            # word-boundary match so ANT id "43692" does not hit "43692120"
+            ident_re = re.compile(r"(?<![0-9A-Z])" + re.escape(fp.address.upper()) + r"(?![0-9A-Z])")
             name_up = fp.name.upper() if fp.name else None
             for sev, blob in flagged:
-                if ident_up in blob or (name_up and name_up in blob):
+                if ident_re.search(blob) or (name_up and name_up in blob):
                     if sev == SEV_ALERT:
                         status = "alert"
                         break

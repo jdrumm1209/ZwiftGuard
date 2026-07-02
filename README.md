@@ -184,8 +184,11 @@ detection and the Zwift log parser — no hardware needed.
   exclusively by Zwift; sniffing the air would need a second dongle. Device-ID
   changes are still caught (R10) because Zwift logs them.
 - **Zwift's log format is undocumented** and changes between releases. The
-  parser patterns in `zwiftguard/zwift_log.py` are broad and every match
-  stores the raw line as evidence, but expect to tune them occasionally.
+  primary patterns in `zwiftguard/zwift_log.py` were verified against a real
+  2026 PC-client session log (BLE role selection, ANT+ channel pairing and
+  dID identification, Wahoo Direct Connect/TNP discovery, player ID); broad
+  fallbacks cover other client versions, and every match stores the raw line
+  as evidence. The log path honors OneDrive/Documents folder redirection.
 - **Zwift Companion bridging** moves sensor traffic to the phone. ZwiftGuard
   flags it as R09 (pairing never seen on the local radio) rather than
   fingerprinting the phone-side sensor.

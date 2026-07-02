@@ -110,6 +110,18 @@ def write_default_config(path: str) -> None:
     Path(path).write_text(json.dumps(DEFAULTS, indent=2), encoding="utf-8")
 
 
+def _documents_dir() -> Path:
+    """Real Documents folder — respects OneDrive/folder redirection."""
+    try:
+        import winreg
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            value, _ = winreg.QueryValueEx(key, "Personal")
+        return Path(os.path.expandvars(value))
+    except OSError:
+        return Path(os.path.expanduser("~")) / "Documents"
+
+
 def default_zwift_log_path() -> str:
-    docs = Path(os.path.expanduser("~")) / "Documents" / "Zwift" / "Logs" / "Log.txt"
-    return str(docs)
+    return str(_documents_dir() / "Zwift" / "Logs" / "Log.txt")
