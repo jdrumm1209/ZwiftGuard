@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Jason Drummond. All rights reserved.
+# Proprietary software: see the "Proprietary License" file in this
+# repository. No use, copying, or redistribution without written consent.
 """Zwift session-log tailer.
 
 Zwift writes a live log to ~/Documents/Zwift/Logs/Log.txt for the current

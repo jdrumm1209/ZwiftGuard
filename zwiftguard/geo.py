@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Jason Drummond. All rights reserved.
+# Proprietary software: see the "Proprietary License" file in this
+# repository. No use, copying, or redistribution without written consent.
 """Public IP / location lookup and local IP discovery.
 
 The public lookup asks ipapi.co once per session (HTTPS, no key needed) for

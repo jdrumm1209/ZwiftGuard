@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Jason Drummond. All rights reserved.
+# Proprietary software: see the "Proprietary License" file in this
+# repository. No use, copying, or redistribution without written consent.
 """BLE advertisement monitor.
 
 Passively scans Bluetooth LE advertisements and feeds every fitness-relevant

@@ -12,6 +12,7 @@ license = { file = "Proprietary License" }
 authors = [{ name = "Jason Drummond" }]
 keywords = ["zwift", "anti-cheat", "ble", "ant+", "integrity", "smart-trainer"]
 classifiers = [
+    "License :: Other/Proprietary License",
     "Environment :: Console",
     "Operating System :: Microsoft :: Windows :: Windows 10",
     "Operating System :: Microsoft :: Windows :: Windows 11",

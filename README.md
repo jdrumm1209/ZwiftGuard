@@ -133,6 +133,10 @@ Dashboard options: `--no-browser` (don't auto-open), `--dashboard-port N`,
 
 ## Installation
 
+> ZwiftGuard is **proprietary software** — see the [License](#license)
+> section. Downloading, installing, or using it requires authorization from
+> the owner under the Proprietary License.
+
 **Option A — standalone EXE (no Python required).**
 Download `zwiftguard.exe` from the
 [Releases page](https://github.com/jdrumm1209/ZwiftGuard/releases), then run it
@@ -250,3 +254,18 @@ detection and the Zwift log parser — no hardware needed.
   presents a perfect identity. No external monitor can rule that out; this
   tool raises the bar so the cheap attacks (emulators, bridges, device swaps,
   proxies) leave evidence.
+
+## License
+
+Copyright (c) 2026 Jason Drummond. **All rights reserved.**
+
+This repository is **proprietary software**, not open source. Viewing the
+source is permitted; copying, modifying, redistributing, or using the
+Software in any project requires **explicit written authorization** from the
+owner. The full terms are in the [Proprietary License](Proprietary%20License)
+file. Contributions are accepted only under the
+[Contributor Agreement](Contributor%20Agreement) and become the property of
+the owner. See also [COPYRIGHT](COPYRIGHT).
+
+For usage authorization or licensing inquiries, contact the repository owner
+via GitHub ([@jdrumm1209](https://github.com/jdrumm1209)).
