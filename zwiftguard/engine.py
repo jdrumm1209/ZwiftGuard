@@ -18,6 +18,10 @@ Rules
   R11 post-lock-device  a new fitness device appeared after the baseline locked
   R12 registry-mismatch device name matches registered equipment but identity differs
   R13 arp-change        MAC behind a direct-connect trainer's IP changed mid-session
+  R14 profile-power     sustained power exceeds the rider's own best-power curve
+  R15 sticky-watts      power value frozen for an extended period under load
+  R16 zero-cadence      sustained power with the cranks not turning
+  R17 robot-smooth      power variance impossibly low for a human (ERG caveat)
 """
 
 from __future__ import annotations
@@ -72,6 +76,17 @@ class IntegrityEngine:
         self.rider: dict[str, Any] = dict(config.get("rider_profile") or {})
         self.location: dict[str, Any] = {}
         self.local_ips: list[str] = []
+        self.known_device_names: list[str] = []
+        # live power feed state (see observe_power)
+        self.power_source: str = ""
+        self.power_connected: bool = False
+        self._pw: dict[int, list] = {}        # second -> [sum, count]
+        self._pw_last: Optional[int] = None   # last instantaneous watts
+        self._pw_cadence: Optional[int] = None
+        self._pw_bests: dict[str, int] = {}   # session bests per window label
+        self._pw_freeze_start: Optional[float] = None
+        self._pw_freeze_val: Optional[int] = None
+        self._pw_zerocad_start: Optional[float] = None
         # registered (trusted) equipment loaded from baseline.json
         self.registry: dict[str, dict[str, Any]] = {}
 
@@ -281,6 +296,134 @@ class IntegrityEngine:
         self.emit(SEV_INFO, "zwift-log", f"Zwift player ID from game log: {player_id}",
                   {"log_line": raw_line}, dedupe=f"pid:{player_id}")
 
+    def set_known_devices(self, names: list[str]) -> None:
+        self.known_device_names = names
+        if names:
+            self.emit(SEV_INFO, "zwift-local",
+                      f"Loaded Zwift's historical device list ({len(names)} sensors ever paired)")
+
+    def apply_local_profile(self, info: Optional[dict[str, Any]]) -> None:
+        """Fill rider power profile from Zwift's local ride cache (config wins)."""
+        if not info:
+            return
+        pb = self.rider.get("power_bests_w") or {}
+        if not any(pb.get(k) for k in ("5s", "1m", "5m", "20m")):
+            self.rider["power_bests_w"] = dict(info["bests_w"])
+            self.rider["bests_source"] = f"Zwift ride cache ({info['rides_scanned']} rides, all-time)"
+        if not self.rider.get("ftp_w") and info.get("ftp_estimate_w"):
+            self.rider["ftp_w"] = info["ftp_estimate_w"]
+            self.rider["ftp_estimated"] = True
+        b = self.rider.get("power_bests_w", {})
+        self.emit(SEV_INFO, "zwift-local",
+                  f"Rider power profile from Zwift's local ride cache "
+                  f"({info['rides_scanned']} rides): 5s {b.get('5s', '?')}W / 1m {b.get('1m', '?')}W / "
+                  f"5m {b.get('5m', '?')}W / 20m {b.get('20m', '?')}W"
+                  + (f", FTP~{self.rider['ftp_w']}W (est.)" if self.rider.get("ftp_estimated") else ""),
+                  {"cp": info})
+
+    # ------------------------------------------------------------- live power
+
+    POWER_WINDOWS = {"5s": 5, "1m": 60, "5m": 300, "20m": 1200}
+
+    def set_power_source(self, name: str, connected: bool) -> None:
+        self.power_source = name
+        self.power_connected = connected
+
+    def _rolling_avg(self, now: float, span: int) -> Optional[float]:
+        sec = int(now)
+        total = cnt = buckets = 0
+        for s in range(sec - span + 1, sec + 1):
+            b = self._pw.get(s)
+            if b:
+                total += b[0]
+                cnt += b[1]
+                buckets += 1
+        if cnt == 0 or buckets < max(1, int(span * 0.8)):  # need 80% coverage
+            return None
+        return total / cnt
+
+    def observe_power(self, watts: int, cadence: Optional[int]) -> None:
+        now = now_ts()
+        sec = int(now)
+        b = self._pw.setdefault(sec, [0, 0])
+        b[0] += watts
+        b[1] += 1
+        self._pw_last = watts
+        if cadence is not None:
+            self._pw_cadence = cadence
+        if len(self._pw) > 1400:
+            cut = sec - 1300
+            for k in [k for k in self._pw if k < cut]:
+                del self._pw[k]
+        pr = self.cfg.get("power_rules", {})
+        profile = self.rider.get("power_bests_w") or {}
+        tol = 1 + pr.get("profile_tolerance_pct", 15) / 100.0
+        for label, span in self.POWER_WINDOWS.items():
+            avg = self._rolling_avg(now, span)
+            if avg is None:
+                continue
+            if avg > self._pw_bests.get(label, 0):
+                self._pw_bests[label] = round(avg)
+            ref = profile.get(label) or 0
+            if ref and avg > ref * tol:
+                self.emit(SEV_ALERT, "R14-profile-power",
+                          f"Rider produced {avg:.0f} W over {label} — {avg / ref * 100 - 100:.0f}% above "
+                          f"their own all-time {label} best of {ref} W. Inconsistent with the rider "
+                          f"profile; review this session's power source.",
+                          {"window": label, "session_avg_w": round(avg), "profile_best_w": ref},
+                          dedupe=f"R14:{label}")
+        self._rule_sticky(now, watts, pr)
+        self._rule_zero_cadence(now, watts, cadence, pr)
+        self._rule_smoothness(now, sec, pr)
+
+    def _rule_sticky(self, now: float, watts: int, pr: dict) -> None:
+        min_w = pr.get("sticky_min_watts", 100)
+        hold = pr.get("sticky_seconds", 30)
+        if watts >= min_w and self._pw_freeze_val is not None and abs(watts - self._pw_freeze_val) <= 1:
+            if self._pw_freeze_start and now - self._pw_freeze_start >= hold:
+                self.emit(SEV_WARN, "R15-sticky-watts",
+                          f"Power value frozen at {watts} W for {now - self._pw_freeze_start:.0f}s — "
+                          f"real pedaling fluctuates; a frozen value is the classic 'sticky watts' signature.",
+                          {"watts": watts, "seconds": round(now - self._pw_freeze_start)},
+                          dedupe=f"R15:{int(self._pw_freeze_start)}")
+        else:
+            self._pw_freeze_val = watts if watts >= min_w else None
+            self._pw_freeze_start = now if watts >= min_w else None
+
+    def _rule_zero_cadence(self, now: float, watts: int, cadence: Optional[int], pr: dict) -> None:
+        if cadence == 0 and watts >= pr.get("sticky_min_watts", 100):
+            if self._pw_zerocad_start is None:
+                self._pw_zerocad_start = now
+            elif now - self._pw_zerocad_start >= pr.get("zero_cadence_seconds", 10):
+                self.emit(SEV_ALERT, "R16-zero-cadence",
+                          f"{watts} W sustained with the cranks not turning for "
+                          f"{now - self._pw_zerocad_start:.0f}s — physically impossible; "
+                          f"the power data is not coming from the pedals.",
+                          {"watts": watts, "seconds": round(now - self._pw_zerocad_start)},
+                          dedupe=f"R16:{int(self._pw_zerocad_start)}")
+        else:
+            self._pw_zerocad_start = None
+
+    def _rule_smoothness(self, now: float, sec: int, pr: dict) -> None:
+        if sec % 30 != 0 or self._pw.get(sec, [0, 0])[1] != 1:
+            return  # evaluate once per 30s
+        span = pr.get("smooth_window_s", 120)
+        vals = [b[0] / b[1] for s in range(sec - span + 1, sec + 1)
+                if (b := self._pw.get(s)) and b[1]]
+        if len(vals) < span * 0.8:
+            return
+        mean = sum(vals) / len(vals)
+        if mean < pr.get("smooth_min_watts", 180):
+            return
+        var = sum((v - mean) ** 2 for v in vals) / len(vals)
+        if var ** 0.5 < pr.get("smooth_stdev_w", 2.0):
+            self.emit(SEV_WARN, "R17-robot-smooth",
+                      f"Power over the last {span}s averages {mean:.0f} W with a standard deviation "
+                      f"of only {var ** 0.5:.1f} W — implausibly smooth for human pedaling. "
+                      f"(Note: ERG mode legitimately reduces variance; treat as a review flag.)",
+                      {"mean_w": round(mean), "stdev_w": round(var ** 0.5, 2), "window_s": span},
+                      dedupe=f"R17:{sec // 600}")
+
     def observe_blocked_process(self, pid: int, name: str, exe: str, pattern: str) -> None:
         self.emit(SEV_ALERT, "R06-blocked-process",
                   f"Sensor emulator / bridge software running: {name} (pid {pid}, matched '{pattern}')",
@@ -303,6 +446,15 @@ class IntegrityEngine:
                   {"fingerprint": fp.to_dict()})
         if self._first_device_ts is None and fp.source in ("ble", "ant"):
             self._first_device_ts = now_ts()
+        if fp.source == "ble" and fp.name and self.known_device_names:
+            nn = _norm_name(fp.name)
+            known = any(nn in _norm_name(k) or _norm_name(k) in nn
+                        for k in self.known_device_names)
+            if not known:
+                self.emit(SEV_INFO, "first-time-device",
+                          f"'{fp.name}' is not in Zwift's historical device list — "
+                          f"first-time equipment on this install",
+                          {"name": fp.name}, dedupe=fp.address)
         if self.baseline_locked and fp.source in ("ble", "ant"):
             self.emit(SEV_WARN, "R11-post-lock-device",
                       f"New {fp.source.upper()} fitness device '{fp.name or fp.address}' appeared "
@@ -463,8 +615,33 @@ class IntegrityEngine:
             "local_ips": list(self.local_ips),
             "rider": dict(self.rider),
             "location": dict(self.location),
+            "power": self._power_snapshot(),
             "devices": devices,
             "events": [e.to_dict() for e in list(self.events)[-200:]],
+        }
+
+    def _power_snapshot(self) -> dict[str, Any]:
+        now = now_ts()
+        sec = int(now)
+        avg3 = self._rolling_avg(now, 3)
+        weight = self.rider.get("weight_kg") or 0
+        history = []
+        span = 900
+        for s in range(sec - span + 1, sec + 1, 5):   # one point per 5s
+            pts = [b[0] / b[1] for x in range(s, min(s + 5, sec + 1))
+                   if (b := self._pw.get(x)) and b[1]]
+            if pts:
+                history.append([s - sec, round(sum(pts) / len(pts))])
+        return {
+            "connected": self.power_connected,
+            "source": self.power_source,
+            "watts": self._pw_last,
+            "avg3s": round(avg3) if avg3 is not None else None,
+            "cadence": self._pw_cadence,
+            "wkg": round(avg3 / weight, 2) if (avg3 is not None and weight) else None,
+            "session_bests": dict(self._pw_bests),
+            "profile_bests": dict(self.rider.get("power_bests_w") or {}),
+            "history": history,
         }
 
     # ----------------------------------------------------------------- report

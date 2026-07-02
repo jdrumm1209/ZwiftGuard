@@ -71,6 +71,23 @@ DEFAULTS: dict[str, Any] = {
     "zwift_log_poll_interval": 2,
     # Live web dashboard (bound to 127.0.0.1 only)
     "dashboard_port": 8377,
+    # Live power feed: attach (read-only) to the trainer/power meter's free
+    # BLE Cycling Power slot for an independent watts/cadence witness. Only
+    # devices that are actively advertising are ever contacted.
+    "live_power_monitor": True,
+    # Auto-fill rider power bests + estimated FTP from Zwift's local ride
+    # cache (Documents/Zwift/cp). Explicit rider_profile values win.
+    "auto_profile_from_zwift": True,
+    # Power-integrity rule thresholds (R14-R17)
+    "power_rules": {
+        "profile_tolerance_pct": 15,   # R14: % above own best before alerting
+        "sticky_seconds": 30,          # R15: frozen-value duration
+        "sticky_min_watts": 100,
+        "zero_cadence_seconds": 10,    # R16
+        "smooth_window_s": 120,        # R17
+        "smooth_min_watts": 180,
+        "smooth_stdev_w": 2.0,
+    },
     # One-time HTTPS lookup of public IP + city/timezone at session start
     # (ipapi.co) so the dashboard can show origin IP and location-local time.
     "public_ip_lookup": True,

@@ -37,6 +37,10 @@ the Zwift client, so it cannot disturb a ride.
 | R11 post-lock-device | WARN | A new fitness device appeared after the session baseline locked |
 | R12 registry-mismatch | ALERT | A registered device name showed up with a different identity than the trusted registry |
 | R13 arp-change | ALERT | The MAC behind a direct-connect trainer's IP changed mid-session |
+| R14 profile-power | ALERT | Sustained power exceeds the rider's own all-time best curve by the configured tolerance |
+| R15 sticky-watts | WARN | Power value frozen under load — the classic "sticky watts" signature |
+| R16 zero-cadence | ALERT | Sustained power with the cranks not turning — data is not coming from the pedals |
+| R17 robot-smooth | WARN | Power variance implausibly low for human pedaling (ERG mode noted as a caveat) |
 
 Every event is appended to a **hash-chained log** (each event's SHA-256 covers
 the previous event's hash), so a session report cannot be edited afterward
@@ -63,6 +67,32 @@ identity fingerprint, manufacturer IDs, live signal strength, and exactly
 what it sends and receives, and is colored **green** (verified/unchanged),
 **amber** (suspicious — review), or **red, pulsing** (integrity violation).
 A live event feed runs underneath.
+
+## Rider power monitor
+
+ZwiftGuard maintains an independent, live view of the rider's output:
+
+- **Real power profile, auto-loaded.** Zwift keeps a per-ride critical-power
+  cache on disk (`Documents/Zwift/cp/`). At startup ZwiftGuard decodes every
+  ride file and derives the rider's genuine all-time 5 s / 1 min / 5 min /
+  20 min bests plus an estimated FTP (95% of the 20-min best). Explicit
+  `rider_profile` config values always win; weight and category cannot be
+  read locally and stay manual.
+- **Live power feed.** The trainer/power meter's standard BLE Cycling Power
+  service is subscribed read-only for live watts and cadence — a second
+  witness, independent of the connection Zwift uses. Only devices that are
+  *actively advertising* are ever contacted, so a sensor Zwift holds
+  exclusively over BLE is never touched (trainers on ANT+/Direct Connect,
+  and modern multi-connection trainers, keep a free advertising slot).
+  Disable with `"live_power_monitor": false` or `--disable power`.
+- **Physiological plausibility rules** (R14–R17) compare the live feed with
+  the rider's own history: sustained output above their all-time curve,
+  frozen "sticky" watts, power with stationary cranks, and robotically
+  smooth output all raise events. Thresholds live under `power_rules` in
+  the config.
+- The **Live rider data** dashboard panel shows current watts (3 s), cadence,
+  W/kg, session bests vs profile bests (bars turn red when a window exceeds
+  the profile), and a 15-minute power sparkline.
 
 Above the topology, a **rider panel** shows who is riding and where the
 connection originates:

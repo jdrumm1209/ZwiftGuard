@@ -77,6 +77,15 @@ async def run_session(cfg: dict, duration: float | None, register_path: str | No
     from . import geo
     engine.set_local_ips([geo.local_ip()])
 
+    if cfg.get("auto_profile_from_zwift", True):
+        from . import zwift_local
+        try:
+            pid = str(engine.rider.get("player_id") or engine.rider.get("zwift_id") or "")
+            engine.apply_local_profile(zwift_local.load_power_bests(pid))
+            engine.set_known_devices(zwift_local.load_known_devices())
+        except Exception as e:
+            engine.emit("WARN", "zwift-local", f"Could not read Zwift local caches: {e}")
+
     async def geo_task() -> None:
         if cfg.get("public_ip_lookup", True):
             info = await asyncio.to_thread(geo.lookup_public_ip)
@@ -92,6 +101,9 @@ async def run_session(cfg: dict, duration: float | None, register_path: str | No
         monitors.append(ProcessMonitor(engine, cfg).run(stop))
     if "net" not in disable:
         monitors.append(NetworkMonitor(engine, cfg).run(stop))
+    if "power" not in disable and "ble" not in disable:
+        from .power_monitor import PowerMonitor
+        monitors.append(PowerMonitor(engine, cfg).run(stop))
 
     async def ticker() -> None:
         while not stop.is_set():
@@ -172,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="scan for N seconds and save the observed equipment as the "
                              "trusted registry (baseline.json)")
     parser.add_argument("--disable", action="append", default=[],
-                        choices=["ble", "log", "proc", "net", "dash"],
+                        choices=["ble", "log", "proc", "net", "dash", "power"],
                         help="turn off a monitor or the dashboard (repeatable)")
     parser.add_argument("--no-browser", action="store_true",
                         help="do not auto-open the dashboard in a browser")

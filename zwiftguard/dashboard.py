@@ -134,6 +134,26 @@ DASHBOARD_HTML = """<!doctype html>
   .bars .fl{height:100%;border-radius:4px;background:linear-gradient(90deg,#0ea5e9,#818cf8)}
   .bars .w{font-size:11.5px;color:var(--text)}
   .rtime{font-size:23px;font-weight:800;letter-spacing:.5px}
+  /* ---- live rider data ---- */
+  .live{display:flex;gap:22px;align-items:stretch;flex-wrap:wrap}
+  .lblock{display:flex;flex-direction:column;justify-content:center;align-items:center;min-width:86px}
+  .lw{font-size:38px;font-weight:800;color:var(--accent);line-height:1.05}
+  .lw2{font-size:26px;font-weight:800;color:#a5b4fc;line-height:1.1}
+  .lunit{color:var(--dim);font-size:11.5px;letter-spacing:.6px;text-transform:uppercase}
+  .lbests{display:grid;grid-template-columns:34px 1fr 58px 58px;gap:3px 10px;
+          align-items:center;min-width:260px;align-self:center}
+  .lbests .hd{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.8px}
+  .lbests .lb{color:var(--dim);font-size:11.5px;text-align:right}
+  .lbests .tr{background:#0a101d;border-radius:4px;height:9px;overflow:hidden}
+  .lbests .fl{height:100%;border-radius:4px;background:linear-gradient(90deg,#0ea5e9,#818cf8)}
+  .lbests .fl.over{background:linear-gradient(90deg,#f59e0b,#ef4444)}
+  .lbests .w{font-size:11.5px}
+  .lbests .w.dimc{color:var(--dim)}
+  #spark{width:340px;height:96px;align-self:center}
+  #spark polyline{fill:none;stroke:var(--accent);stroke-width:1.6}
+  #spark path{fill:rgba(56,189,248,.12)}
+  #spark text{font-size:10px;fill:var(--dim)}
+  #lSrc{margin-top:8px}
   /* ---- topology ---- */
   svg{width:100%;display:block}
   svg text{font:12.5px "Inter","Segoe UI",system-ui,sans-serif;fill:var(--text)}
@@ -204,6 +224,19 @@ DASHBOARD_HTML = """<!doctype html>
         <div class="rsub mono" id="rIps"></div>
       </div>
     </div>
+  </div>
+  <div class="card">
+    <h2>Live rider data</h2>
+    <div class="live">
+      <div class="lblock"><div class="lw" id="lWatts">&mdash;</div><div class="lunit">watts (3s)</div></div>
+      <div class="lblock"><div class="lw2" id="lCad">&mdash;</div><div class="lunit">rpm</div></div>
+      <div class="lblock"><div class="lw2" id="lWkg">&mdash;</div><div class="lunit">W/kg</div></div>
+      <div class="vdiv"></div>
+      <div class="lbests" id="lBests"></div>
+      <div class="vdiv"></div>
+      <svg id="spark" viewBox="0 0 340 96" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="rsub" id="lSrc">live power feed: starting&hellip;</div>
   </div>
   <div class="card">
     <h2>Equipment &rarr; Zwift data path</h2>
@@ -351,16 +384,19 @@ function renderRider(s){
   if(r.category) cat.push("Cat "+r.category);
   if(r.weight_kg) cat.push(r.weight_kg+" kg");
   document.getElementById("rCat").textContent=cat.join(" \\u00b7 ");
-  document.getElementById("rFtp").textContent=r.ftp_w||"\\u2014";
+  document.getElementById("rFtp").textContent=
+    r.ftp_w ? (r.ftp_estimated?"~":"")+r.ftp_w : "\\u2014";
   document.getElementById("rWkg").textContent=
     (r.ftp_w&&r.weight_kg)?(r.ftp_w/r.weight_kg).toFixed(1):"\\u2014";
   const bests=r.power_bests_w||{};
   const order=["5s","1m","5m","20m"];
   const vals=order.map(k=>bests[k]||0), mx=Math.max(...vals,1);
+  const src=r.bests_source
+    ? `<span class="lb"></span><span class="rsub" style="grid-column:2/4">${esc(r.bests_source)}${r.ftp_estimated?" \\u00b7 FTP ~ 95% of 20m best":""}</span>` : "";
   document.getElementById("rBars").innerHTML = vals.some(v=>v)
     ? order.map((k,i)=>`<span class="lb">${k}</span>
         <span class="tr"><span class="fl" style="width:${Math.round(vals[i]/mx*100)}%"></span></span>
-        <span class="w">${vals[i]?vals[i]+" W":"\\u2014"}</span>`).join("")
+        <span class="w">${vals[i]?vals[i]+" W":"\\u2014"}</span>`).join("")+src
     : `<span class="lb"></span><span class="rsub" style="grid-column:2/4">add power_bests_w to config to show your power curve</span>`;
   // location + clocks
   tz = r.timezone || loc.timezone || null;
@@ -376,6 +412,47 @@ function renderRider(s){
   if(loc.org) ipbits.push(loc.org);
   document.getElementById("rIps").textContent=ipbits.join(" \\u00b7 ");
   tickClock();
+}
+
+function renderLive(s){
+  const p=s.power||{};
+  document.getElementById("lWatts").textContent = p.avg3s!=null ? p.avg3s : "\\u2014";
+  document.getElementById("lCad").textContent   = p.cadence!=null ? p.cadence : "\\u2014";
+  document.getElementById("lWkg").textContent   = p.wkg!=null ? p.wkg.toFixed(2) : "\\u2014";
+  // session bests vs profile bests
+  const order=["5s","1m","5m","20m"];
+  const sb=p.session_bests||{}, pb=p.profile_bests||{};
+  const mx=Math.max(...order.map(k=>Math.max(sb[k]||0,pb[k]||0)),1);
+  document.getElementById("lBests").innerHTML =
+    `<span></span><span class="hd">session vs profile best</span><span class="hd">now</span><span class="hd">best</span>`+
+    order.map(k=>{
+      const s0=sb[k]||0, p0=pb[k]||0;
+      const over = p0 && s0 > p0*1.15;
+      return `<span class="lb">${k}</span>
+        <span class="tr"><span class="fl${over?" over":""}" style="width:${Math.round(s0/mx*100)}%"></span></span>
+        <span class="w${s0?"":" dimc"}">${s0?s0+" W":"\\u2014"}</span>
+        <span class="w dimc">${p0?p0+" W":"\\u2014"}</span>`;
+    }).join("");
+  // sparkline: last 15 min, one point / 5s
+  const h=p.history||[];
+  const svg=document.getElementById("spark");
+  if(h.length>1){
+    const maxW=Math.max(...h.map(d=>d[1]),100);
+    const X=t=>340*(t+900)/900, Y=w=>90-82*(w/maxW);
+    const pts=h.map(d=>X(d[0]).toFixed(1)+","+Y(d[1]).toFixed(1)).join(" ");
+    const last=h[h.length-1];
+    svg.innerHTML=`<path d="M ${X(h[0][0]).toFixed(1)} 90 L ${pts.replace(/ /g," L ")} L ${X(last[0]).toFixed(1)} 90 Z"/>`+
+      `<polyline points="${pts}"/>`+
+      `<circle cx="${X(last[0]).toFixed(1)}" cy="${Y(last[1]).toFixed(1)}" r="2.6" fill="var(--accent)"/>`+
+      `<text x="4" y="12">${maxW} W max \\u00b7 15 min</text>`;
+  } else {
+    svg.innerHTML=`<text x="4" y="50">no power samples yet</text>`;
+  }
+  document.getElementById("lSrc").textContent = p.connected
+    ? "live power feed: connected to '"+(p.source||"?")+"' via BLE Cycling Power \\u2014 an independent "+
+      "witness to the watts Zwift receives"
+    : "live power feed: waiting for an advertising power source\\u2026 (unavailable if Zwift holds the "+
+      "trainer's only BLE slot; harmless \\u2014 all other monitors keep running)";
 }
 
 function tickClock(){
@@ -399,6 +476,7 @@ function render(s){
     (s.location||{}).public_ip,dead]);
   if(key!==topoKey){ topoKey=key; renderTopo(s); }
   renderRider(s);
+  renderLive(s);
 
   const c=s.severity_counts;
   const v=document.getElementById("verdict");

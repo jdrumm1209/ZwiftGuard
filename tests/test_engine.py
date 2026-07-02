@@ -221,6 +221,84 @@ def test_zwift_log_parser() -> None:
         check(f"parses: {line[11:64]}", ok)
 
 
+def test_cp2_parser() -> None:
+    print("zwift local cache (cp2 + knowndevices)")
+    import struct
+    from zwiftguard.zwift_local import parse_cp2, _KNOWN_RE
+    blob = struct.pack("<III", 1, 1774164822, 0)
+    for dur, w in [(1, 591), (5, 514), (60, 348), (300, 320), (1200, 292)]:
+        blob += struct.pack("<HH", dur, w)
+    curve = parse_cp2(blob)
+    check("cp2 curve decodes", curve == {1: 591, 5: 514, 60: 348, 300: 320, 1200: 292})
+    check("cp2 rejects unknown version", parse_cp2(struct.pack("<III", 9, 0, 0)) == {})
+    xml = '<DEVICES version="1"><DEVICE>[0] [7903064] [0] HR Strap 38744</DEVICE>' \
+          '<DEVICE>[0] [2243399] [0] Unknown device</DEVICE></DEVICES>'
+    names = [m.group(1).strip() for m in _KNOWN_RE.finditer(xml)]
+    check("knowndevices regex extracts names", names == ["HR Strap 38744", "Unknown device"])
+
+
+def test_cpm_parser() -> None:
+    print("BLE cycling power measurement parsing")
+    import struct
+    from zwiftguard.power_monitor import parse_cpm, CadenceTracker
+    # flags: crank data present (0x20)
+    pkt = struct.pack("<HhHH", 0x0020, 245, 100, 10000)
+    watts, crank = parse_cpm(pkt)
+    check("watts decoded", watts == 245)
+    check("crank decoded", crank == (100, 10000))
+    trk = CadenceTracker()
+    trk.update((100, 10000))
+    rpm = trk.update((102, 10000 + 1024))     # 2 revs in exactly 1s -> 120 rpm
+    check("cadence from crank deltas", rpm == 120)
+    # wheel data present (0x10) shifts the crank fields by 6 bytes
+    pkt2 = struct.pack("<Hh", 0x0030, 300) + b"\x00" * 6 + struct.pack("<HH", 5, 5)
+    w2, c2 = parse_cpm(pkt2)
+    check("offset handling with wheel data", w2 == 300 and c2 == (5, 5))
+
+
+def test_power_rules() -> None:
+    print("power integrity rules (R14-R17)")
+    import zwiftguard.engine as eng_mod
+    orig = eng_mod.now_ts
+    t0 = 1_000_020.0   # multiple of 30 keeps R17's cadence predictable
+    try:
+        e = make_engine()
+        e.rider["power_bests_w"] = {"5s": 500, "1m": 400, "5m": 350, "20m": 300}
+        for i in range(6):   # 700 W for 6 s >> 5s best * 1.15
+            eng_mod.now_ts = lambda i=i: t0 + i
+            e.observe_power(700, 90)
+        check("power above own 5s best raises R14", "R14-profile-power" in rules_fired(e))
+
+        e2 = make_engine()
+        for i in range(40):  # exactly 250 W for 40 s
+            eng_mod.now_ts = lambda i=i: t0 + i
+            e2.observe_power(250, 85 + (i % 5))
+        check("frozen power value raises R15", "R15-sticky-watts" in rules_fired(e2))
+
+        e3 = make_engine()
+        for i in range(15):  # 250 W with cranks stopped
+            eng_mod.now_ts = lambda i=i: t0 + i
+            e3.observe_power(250, 0)
+        check("power with zero cadence raises R16", "R16-zero-cadence" in rules_fired(e3))
+
+        e4 = make_engine()
+        vals = [200, 201, 200, 199, 200]   # tiny variance around 200 W
+        for i in range(130):
+            eng_mod.now_ts = lambda i=i: t0 + i
+            e4.observe_power(vals[i % 5], 88)
+        check("implausibly smooth power raises R17", "R17-robot-smooth" in rules_fired(e4))
+
+        eng_mod.now_ts = lambda: t0 + 6
+        snap = e.state_snapshot()
+        check("session bests tracked", snap["power"]["session_bests"].get("5s", 0) >= 690)
+        check("power history in snapshot", len(snap["power"]["history"]) >= 1)
+        import json as _json
+        _json.dumps(snap)
+        check("power snapshot serializes", True)
+    finally:
+        eng_mod.now_ts = orig
+
+
 def test_state_snapshot() -> None:
     print("dashboard state snapshot")
     import json as _json
@@ -262,7 +340,8 @@ def main() -> int:
                test_brand_mismatch, test_rssi_anomaly, test_ant_id_change,
                test_ghost_pairing, test_post_lock_and_baseline, test_loopback_and_arp,
                test_registry_mismatch, test_hash_chain, test_zwift_log_parser,
-               test_tnp_direct_connect, test_state_snapshot, test_dashboard_server]:
+               test_tnp_direct_connect, test_cp2_parser, test_cpm_parser,
+               test_power_rules, test_state_snapshot, test_dashboard_server]:
         fn()
     print(f"\n{PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0
