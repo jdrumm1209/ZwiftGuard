@@ -71,6 +71,18 @@ DEFAULTS: dict[str, Any] = {
     "zwift_log_poll_interval": 2,
     # Live web dashboard (bound to 127.0.0.1 only)
     "dashboard_port": 8377,
+    # ANT+ manufacturer IDs (FIT profile) used to name ANT sensors from the
+    # "[ANT] dID <id> MFG <n> Model <m>" lines in Zwift's log. Extend freely.
+    "ant_manufacturer_ids": {
+        "1": "Garmin", "6": "SRM", "7": "Quarq", "9": "Saris", "15": "Dynastream",
+        "32": "Wahoo Fitness", "40": "Concept2", "41": "Shimano", "51": "4iiii",
+        "63": "Specialized", "67": "BKOOL", "69": "Stages Cycling", "73": "Wattbike",
+        "81": "Bontrager", "83": "Scosche", "86": "Elite", "89": "Tacx",
+        "107": "Kinetic", "263": "Favero Electronics",
+    },
+    # Seconds without BLE advertisements before equipment is considered
+    # disconnected (R18 dropout/reconnect events, dashboard offline state).
+    "equipment_timeout_s": 45,
     # Live power feed: attach (read-only) to the trainer/power meter's free
     # BLE Cycling Power slot for an independent watts/cadence witness. Only
     # devices that are actively advertising are ever contacted.

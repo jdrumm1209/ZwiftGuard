@@ -221,6 +221,60 @@ def test_zwift_log_parser() -> None:
         check(f"parses: {line[11:64]}", ok)
 
 
+def test_ant_naming() -> None:
+    print("ANT+ equipment naming")
+    e = make_engine()
+    e.observe_ant_ident("1141667", 32, 1, "[ANT] dID 1141667 MFG 32 Model 1")
+    check("ANT sensor named from manufacturer ID",
+          e.devices["ant:1141667"].name == "Wahoo Fitness ANT+ sensor (model 1)")
+    e.observe_zwift_pairing("ant", "1", "43692", "[ANT_IMPORTANT] Pairing deviceID 43692 to channel 1")
+    e.observe_zwift_pairing("ble", "HR Strap 43692", "", "...", role="HR")
+    check("ANT sensor named from role pairing",
+          e.devices["ant:43692"].name == "HR Strap 43692 (HR)")
+
+
+def test_dropout_reconnect() -> None:
+    print("equipment dropout / reconnect (R18)")
+    import zwiftguard.engine as eng_mod
+    orig = eng_mod.now_ts
+    t0 = 2_000_000.0
+    try:
+        e = make_engine()
+        eng_mod.now_ts = lambda: t0
+        e.observe_ble("AA:00:00:00:00:60", "TICKR 1234", -60, [], ["180d"])
+        e.devices["ble:AA:00:00:00:00:60"].last_seen = t0
+        eng_mod.now_ts = lambda: t0 + 60          # 60s of silence
+        e.tick()
+        check("stale BLE device raises R18-dropout", "R18-dropout" in rules_fired(e))
+        snap = e.state_snapshot()
+        check("device marked offline in snapshot",
+              snap["devices"][0]["online"] is False)
+        eng_mod.now_ts = lambda: t0 + 70          # advertisements resume
+        e.observe_ble("AA:00:00:00:00:60", "TICKR 1234", -61, [], ["180d"])
+        check("return raises R18-reconnect", "R18-reconnect" in rules_fired(e))
+        check("device back online in snapshot",
+              e.state_snapshot()["devices"][0]["online"] is True)
+    finally:
+        eng_mod.now_ts = orig
+
+
+def test_status_log_lines() -> None:
+    print("zwift log link-state lines")
+    from zwiftguard.zwift_log import ZwiftLogMonitor
+    e = make_engine()
+    mon = ZwiftLogMonitor(e, e.cfg)
+    mon._parse_line('[16:35:14] [BLE] Device: "HR Strap 43692" has new connection status: disconnected')
+    mon._parse_line('[16:35:14] [BLE] Unpair "Wahoo KICKR 6BA3 93", address = 222700555 (previously paired)')
+    mon._parse_line('[16:35:14] INFO LEVEL: [BLE] WFTNPDeviceManager: disconnecting LAN device "Wahoo KICKR 6BA3"')
+    msgs = [ev.message for ev in e.events if ev.rule == "R18-connection"]
+    check("BLE disconnect line detected", any("HR Strap 43692' disconnected" in m for m in msgs))
+    check("unpair line detected", any("unpaired" in m for m in msgs))
+    check("direct-connect disconnect detected", any("direct connect" in m for m in msgs))
+    # 'disconnected' status line must NOT be parsed as a fresh pairing
+    check("disconnect not mistaken for pairing",
+          not any("paired ble device 'HR Strap 43692'" in ev.message for ev in e.events))
+
+
 def test_cp2_parser() -> None:
     print("zwift local cache (cp2 + knowndevices)")
     import struct
@@ -340,7 +394,8 @@ def main() -> int:
                test_brand_mismatch, test_rssi_anomaly, test_ant_id_change,
                test_ghost_pairing, test_post_lock_and_baseline, test_loopback_and_arp,
                test_registry_mismatch, test_hash_chain, test_zwift_log_parser,
-               test_tnp_direct_connect, test_cp2_parser, test_cpm_parser,
+               test_tnp_direct_connect, test_ant_naming, test_dropout_reconnect,
+               test_status_log_lines, test_cp2_parser, test_cpm_parser,
                test_power_rules, test_state_snapshot, test_dashboard_server]:
         fn()
     print(f"\n{PASS} passed, {FAIL} failed")

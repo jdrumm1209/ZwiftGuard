@@ -48,6 +48,8 @@ class NetworkMonitor:
         self._zwift_names = [n.lower() for n in config.get("zwift_process_names", [])]
         self._zwift_seen = False
         self._public_peer_count = 0
+        self._lan_present: set[str] = set()
+        self._lan_ever: set[str] = set()
 
     # ------------------------------------------------------------- helpers
 
@@ -105,6 +107,7 @@ class NetworkMonitor:
             self.engine.emit("INFO", "net-monitor", "Zwift process exited")
 
         arp = None  # lazy: only read the ARP table if a LAN peer shows up
+        current_lan: set[str] = set()
         for p in procs:
             try:
                 conns = p.net_connections(kind="inet")
@@ -128,6 +131,7 @@ class NetworkMonitor:
                         self.engine.observe_network_peer(ip_s, c.raddr.port, mac="",
                                                          is_loopback=True, peer_process=peer)
                 elif ip.is_private:
+                    current_lan.add(ip_s)
                     if arp is None:
                         arp = read_arp_table()
                     self.engine.observe_network_peer(ip_s, c.raddr.port,
@@ -135,6 +139,23 @@ class NetworkMonitor:
                 else:
                     self._public_peer_count += 1
                     self.engine.observe_zwift_server(ip_s, c.raddr.port)
+
+        # Direct-connect trainer link-state transitions (only while Zwift is
+        # up, so its normal exit does not spam disconnect events).
+        if procs:
+            for ip_s in self._lan_present - current_lan:
+                fp = self.engine.devices.get(f"network:{ip_s}")
+                self.engine.observe_equipment_status(fp.name if fp else ip_s,
+                                                     "TCP link closed", "")
+            for ip_s in current_lan - self._lan_present:
+                if ip_s in self._lan_ever:
+                    fp = self.engine.devices.get(f"network:{ip_s}")
+                    self.engine.observe_equipment_status(fp.name if fp else ip_s,
+                                                         "TCP link re-established", "")
+            self._lan_present = current_lan
+            self._lan_ever |= current_lan
+        else:
+            self._lan_present = set()
 
     # ----------------------------------------------------------------- run
 

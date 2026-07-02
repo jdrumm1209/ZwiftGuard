@@ -66,6 +66,7 @@ class IntegrityEngine:
         self._ant_ids: set[str] = set()              # all ANT+ device IDs seen
         self._tnp_name: str = ""                     # direct-connect trainer name
         self._ghost_pending: dict[str, tuple[str, str, float]] = {}  # nn -> (name, line, ts)
+        self._offline: set[str] = set()              # device keys currently off the air
         self._zwift_paired_names: set[str] = set()
         # network state
         self._ip_macs: dict[str, str] = {}
@@ -164,6 +165,14 @@ class IntegrityEngine:
             self.devices[key] = fp
             self._on_new_device(fp)
         else:
+            if key in self._offline:
+                self._offline.discard(key)
+                gap = now_ts() - fp.last_seen
+                self.emit(SEV_WARN if self.baseline_locked else SEV_INFO, "R18-reconnect",
+                          f"'{fp.name or fp.address}' is back on the air after {gap:.0f}s offline"
+                          + (" mid-session — identity rules re-checked" if self.baseline_locked else ""),
+                          {"address": fp.address, "offline_seconds": round(gap)},
+                          dedupe=f"{key}:{int(fp.last_seen)}")
             fp.last_seen = now_ts()
             if name and not fp.name:
                 fp.name = name
@@ -186,7 +195,36 @@ class IntegrityEngine:
         self._rule_rssi(fp)
         self._rule_registry(fp)
 
-    def observe_zwift_pairing(self, kind: str, name: str, ident: str, raw_line: str) -> None:
+    def observe_ant_ident(self, ident: str, mfg: int, model: int, raw_line: str) -> None:
+        """'[ANT] dID <id> MFG <n> Model <m>' — name the ANT+ sensor properly."""
+        self._ant_ids.add(ident)
+        mfg_name = self.cfg.get("ant_manufacturer_ids", {}).get(str(mfg), f"MFG {mfg}")
+        label = f"{mfg_name} ANT+ sensor (model {model})"
+        key = f"ant:{ident}"
+        fp = self.devices.get(key)
+        if fp is None:
+            fp = DeviceFingerprint(source="ant", address=str(ident), name=label)
+            self.devices[key] = fp
+            self._on_new_device(fp)
+        else:
+            fp.last_seen = now_ts()
+            if fp.name in ("", "device") or fp.name.startswith("channel "):
+                fp.name = label
+                self.emit(SEV_INFO, "zwift-pairing",
+                          f"ANT+ device {ident} identified: {label}",
+                          {"log_line": raw_line}, dedupe=f"antid:{ident}")
+
+    def observe_equipment_status(self, name: str, status: str, raw_line: str) -> None:
+        """Zwift-reported link-state change (disconnect / unpair / TCP close)."""
+        sev = SEV_WARN if (self.baseline_locked and status.startswith("disconnect")) else SEV_INFO
+        self.emit(sev, "R18-connection",
+                  f"Equipment link change: '{name}' {status}"
+                  + (" mid-session" if self.baseline_locked else ""),
+                  {"name": name, "status": status, "log_line": raw_line},
+                  dedupe=f"{name}:{status}:{int(now_ts() / 60)}")
+
+    def observe_zwift_pairing(self, kind: str, name: str, ident: str, raw_line: str,
+                              role: str = "") -> None:
         """Called by the Zwift log tailer. kind: 'ant' | 'ble' | 'tnp' | 'generic'."""
         nn = _norm_name(name)
         if kind == "tnp":
@@ -223,8 +261,17 @@ class IntegrityEngine:
                 self._on_new_device(fp)
         if nn:
             self._zwift_paired_names.add(nn)
+        # A [BLE]-tagged pairing whose name embeds a known ANT id names that
+        # ANT sensor (e.g. 'HR Strap 43692' -> ant:43692), role included.
+        if kind in ("ble", "generic") and name:
+            for aid in re.findall(r"\d{3,10}", name):
+                fp = self.devices.get(f"ant:{aid}")
+                if fp is not None and (fp.name in ("", "device", name) or fp.name.startswith("channel ")
+                                       or "ANT+ sensor" in fp.name):
+                    fp.name = name + (f" ({role})" if role else "")
         self.emit(SEV_INFO, "zwift-pairing",
-                  f"Zwift log: paired {kind} device '{name}'" + (f" id={ident}" if ident else ""),
+                  f"Zwift log: paired {kind} device '{name}'"
+                  + (f" role={role}" if role else "") + (f" id={ident}" if ident else ""),
                   {"log_line": raw_line}, dedupe=f"{kind}:{name}:{ident}")
         # R09 candidate: Zwift paired with something we never saw advertising.
         # Evaluation is deferred ~10s (see tick) because log lines for the
@@ -545,7 +592,20 @@ class IntegrityEngine:
     # ------------------------------------------------------------------ ticks
 
     def tick(self) -> None:
-        """Periodic housekeeping: baseline locking, deferred R09 evaluation."""
+        """Housekeeping: baseline lock, deferred R09, BLE dropout sweep."""
+        timeout = self.cfg.get("equipment_timeout_s", 45)
+        for key, fp in self.devices.items():
+            if fp.source != "ble" or key in self._offline:
+                continue
+            gap = now_ts() - fp.last_seen
+            if gap > timeout:
+                self._offline.add(key)
+                self.emit(SEV_WARN if self.baseline_locked else SEV_INFO, "R18-dropout",
+                          f"Signal from '{fp.name or fp.address}' lost — no advertisements for "
+                          f"{gap:.0f}s (powered off, out of range, or now exclusively connected)"
+                          + (" mid-session" if self.baseline_locked else ""),
+                          {"address": fp.address, "gap_seconds": round(gap)},
+                          dedupe=f"{key}:{int(fp.last_seen)}")
         for nn in list(self._ghost_pending):
             name, raw_line, ts = self._ghost_pending[nn]
             if any(aid in name for aid in self._ant_ids) or self._seen_on_air(nn):
@@ -599,6 +659,8 @@ class IntegrityEngine:
                     status = "warn"
             d = fp.to_dict()
             d["status"] = status
+            d["online"] = (fp.source != "ble"
+                           or now_ts() - fp.last_seen <= self.cfg.get("equipment_timeout_s", 45))
             devices.append(d)
 
         return {

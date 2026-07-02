@@ -33,7 +33,7 @@ from .engine import IntegrityEngine
 # come first, broad fallbacks for other client versions last.
 _PATTERNS: list[tuple[str, re.Pattern]] = [
     # "[BLE] Device selected for role (device: HR Strap 43692, role: HR)"
-    ("ble", re.compile(r"\[BLE\]\s*Device selected for role\s*\(device:\s*(?P<name>[^,)]+),", re.IGNORECASE)),
+    ("ble", re.compile(r"\[BLE\]\s*Device selected for role\s*\(device:\s*(?P<name>[^,)]+),\s*role:\s*(?P<role>\w+)", re.IGNORECASE)),
     # '[BLE] Device: "HR Strap 43692" has new connection status: connected'
     ("ble", re.compile(r"Device:\s*\"(?P<name>[^\"]+)\"\s*has new connection status:\s*connected", re.IGNORECASE)),
     # '[BLE] WFTNPDeviceManager::Pairing device "Wahoo KICKR 6BA3 93"'
@@ -66,12 +66,32 @@ class ZwiftLogMonitor:
         self._announced_missing = False
 
     _PLAYER_ID_RE = re.compile(r"player\s*id\D{0,6}(\d{4,12})", re.IGNORECASE)
+    # "[ANT] dID 1141667 MFG 32 Model 1" -> manufacturer/model identification
+    _ANT_IDENT_RE = re.compile(r"\[ANT\]\s*dID\s*(\d{3,10})\s*MFG\s*(\d+)\s*Model\s*(\d+)", re.IGNORECASE)
+    # Equipment link-state changes reported by Zwift itself
+    _STATUS_RES = [
+        (re.compile(r"Device:\s*\"([^\"]+)\"\s*has new connection status:\s*disconnect", re.IGNORECASE),
+         "disconnected"),
+        (re.compile(r"\[BLE\]\s*Unpair\s*\"([^\"]+)\"", re.IGNORECASE), "unpaired"),
+        (re.compile(r"WFTNPDeviceManager:\s*disconnecting LAN device\s*\"([^\"]+)\"", re.IGNORECASE),
+         "disconnected (direct connect)"),
+    ]
 
     def _parse_line(self, line: str) -> None:
         pid = self._PLAYER_ID_RE.search(line)
         if pid:
             self.engine.set_player_id(pid.group(1), line.strip())
             return
+        ident_m = self._ANT_IDENT_RE.search(line)
+        if ident_m:
+            self.engine.observe_ant_ident(ident_m.group(1), int(ident_m.group(2)),
+                                          int(ident_m.group(3)), line.strip())
+            return
+        for pat, status in self._STATUS_RES:
+            m = pat.search(line)
+            if m:
+                self.engine.observe_equipment_status(m.group(1).strip(), status, line.strip())
+                return
         for kind, pat in _PATTERNS:
             m = pat.search(line)
             if not m:
@@ -81,7 +101,9 @@ class ZwiftLogMonitor:
             ident = (groups.get("id") or "").strip()
             if not name and not ident:
                 continue
-            self.engine.observe_zwift_pairing(kind=kind, name=name, ident=ident, raw_line=line.strip())
+            self.engine.observe_zwift_pairing(kind=kind, name=name, ident=ident,
+                                              raw_line=line.strip(),
+                                              role=(groups.get("role") or "").strip())
             return
 
     async def run(self, stop: asyncio.Event) -> None:

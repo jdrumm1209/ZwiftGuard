@@ -17,7 +17,7 @@ from typing import Optional
 def lookup_public_ip(timeout: float = 8.0) -> Optional[dict]:
     req = urllib.request.Request(
         "https://ipapi.co/json/",
-        headers={"User-Agent": "zwiftguard/0.3 (+https://github.com/jdrumm1209/3.-Zwift)"},
+        headers={"User-Agent": "zwiftguard (+https://github.com/jdrumm1209/ZwiftGuard)"},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:

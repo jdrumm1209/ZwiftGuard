@@ -166,6 +166,7 @@ DASHBOARD_HTML = """<!doctype html>
   .node{fill:#0f1626;stroke-width:1.4;rx:12}
   .node.ok{stroke:var(--ok)} .node.warn{stroke:var(--warn)}
   .node.alert{stroke:var(--alert);animation:pulse 1s infinite}
+  .node.off{stroke:#4b5c78;stroke-dasharray:5 4;opacity:.72}
   .node.hub{stroke:var(--accent)} .node.cloud{stroke:#818cf8}
   path.wire{fill:none;stroke:var(--wire);stroke-width:1.7;stroke-linejoin:round;
             stroke-dasharray:6 7;animation:dashmove 1.1s linear infinite;opacity:.95}
@@ -263,7 +264,7 @@ const FLOWS = {
   "1814": {down:["pace","cadence"], up:[]}
 };
 const STATUS_TXT = {ok:["\\u25cf verified","var(--ok)"], warn:["\\u25cf suspicious","var(--warn)"],
-                    alert:["\\u25cf VIOLATION","var(--alert)"]};
+                    alert:["\\u25cf VIOLATION","var(--alert)"], off:["\\u25cb offline","#64748b"]};
 let prevAlerts=0, dead=false, topoKey="", evKey="", tz=null;
 
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
@@ -310,10 +311,12 @@ function renderTopo(s){
   devs.forEach((d,i)=>{
     const y=top+i*rowH, yc=y+cardH/2;
     const fl=deviceFlows(d);
-    const st=STATUS_TXT[d.status]||STATUS_TXT.ok;
+    const offline = d.online===false;
+    const cls = (offline && d.status==="ok") ? "off" : d.status;
+    const st = offline&&d.status==="ok" ? STATUS_TXT.off : (STATUS_TXT[d.status]||STATUS_TXT.ok);
     const cids=(d.company_ids&&d.company_ids.length)
       ? " \\u00b7 mfr 0x"+d.company_ids.map(c=>c.toString(16).padStart(4,"0")).join(", 0x") : "";
-    svg += `<rect class="node ${d.status}" x="${DX}" y="${y}" width="${DW}" height="${cardH}" rx="12"/>`;
+    svg += `<rect class="node ${cls}" x="${DX}" y="${y}" width="${DW}" height="${cardH}" rx="12"/>`;
     const nm=(d.name||"(no name)");
     svg += textEl(DX+14,y+22,"ttl",esc(nm.length>24?nm.slice(0,23)+"\\u2026":nm));
     svg += `<text class="statusw" x="${DX+DW-14}" y="${y+22}" text-anchor="end" fill="${st[1]}">${st[0]}</text>`;
@@ -323,10 +326,11 @@ function renderTopo(s){
     svg += textEl(DX+14,y+94,"flow","\\u2192 sends: "+fl.down);
     if(fl.up) svg += textEl(DX+14,y+111,"flowup","\\u2190 gets: "+fl.up);
     // data wire: card -> bus -> PC inlet
-    svg += `<path class="wire${deadCls}" marker-end="url(#arr)"
+    const wDead = (dead||offline) ? " dead" : "";
+    svg += `<path class="wire${wDead}" marker-end="url(#arr)"
       d="M ${DX+DW} ${yc-8} H ${BUS1} V ${pcDataY} H ${PCX-3}"/>`;
     if(fl.up)
-      svg += `<path class="wire up${deadCls}" marker-end="url(#arrp)"
+      svg += `<path class="wire up${wDead}" marker-end="url(#arrp)"
         d="M ${PCX} ${pcCtlY} H ${BUS2} V ${yc+10} H ${DX+DW+3}"/>`;
   });
 
@@ -470,7 +474,7 @@ setInterval(tickClock,1000);
 
 function render(s){
   // topology: only rebuild when content actually changes (keeps animation smooth)
-  const key=JSON.stringify([s.devices.map(d=>[d.address,d.name,d.status,d.services,d.source,d.mac,
+  const key=JSON.stringify([s.devices.map(d=>[d.address,d.name,d.status,d.online,d.services,d.source,d.mac,
       d.identity_hash,Math.round((d.rssi_last||0)/6)]),
     s.zwift_servers,s.zwift_running,s.local_ips,s.local_adapter_macs,
     (s.location||{}).public_ip,dead]);

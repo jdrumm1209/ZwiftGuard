@@ -41,6 +41,14 @@ the Zwift client, so it cannot disturb a ride.
 | R15 sticky-watts | WARN | Power value frozen under load — the classic "sticky watts" signature |
 | R16 zero-cadence | ALERT | Sustained power with the cranks not turning — data is not coming from the pedals |
 | R17 robot-smooth | WARN | Power variance implausibly low for human pedaling (ERG mode noted as a caveat) |
+| R18 dropout/reconnect | INFO/WARN | Equipment disconnected or reconnected — BLE advertisements stopping, Zwift-reported unpair/disconnect, or a direct-connect TCP link closing. WARN when it happens mid-session (after baseline lock) |
+
+ANT+ sensors are named from Zwift's log: the manufacturer/model identification
+lines (`dID … MFG … Model …`, mapped via `ant_manufacturer_ids` in the config)
+and role-pairing lines give entries like *"HR Strap 43692 (HR)"* or
+*"Wahoo Fitness ANT+ sensor (model 1)"* instead of bare device IDs. Devices
+that stop advertising mid-session show as dimmed/offline on the dashboard
+until they return.
 
 Every event is appended to a **hash-chained log** (each event's SHA-256 covers
 the previous event's hash), so a session report cannot be edited afterward
@@ -127,7 +135,7 @@ Dashboard options: `--no-browser` (don't auto-open), `--dashboard-port N`,
 
 **Option A — standalone EXE (no Python required).**
 Download `zwiftguard.exe` from the
-[Releases page](https://github.com/jdrumm1209/3.-Zwift/releases), then run it
+[Releases page](https://github.com/jdrumm1209/ZwiftGuard/releases), then run it
 from a terminal (PowerShell or Windows Terminal):
 
 ```powershell
@@ -138,20 +146,36 @@ from a terminal (PowerShell or Windows Terminal):
 **Option B — pip install (Python 3.10+).**
 
 ```powershell
-pip install git+https://github.com/jdrumm1209/3.-Zwift.git
+pip install git+https://github.com/jdrumm1209/ZwiftGuard.git
 zwiftguard --register 60
 ```
 
 **Option C — from a clone (development).**
 
 ```powershell
-git clone https://github.com/jdrumm1209/3.-Zwift.git
-cd 3.-Zwift
+git clone https://github.com/jdrumm1209/ZwiftGuard.git
+cd ZwiftGuard
 pip install -e .
 ```
 
 Requires Windows 10/11 with Bluetooth. Reports, `baseline.json`, and config
 files are written to the directory you run it from.
+
+### Uninstalling
+
+`zwiftguard.exe` is a **portable, self-contained executable** — there is no
+installer, no Windows service, no registry entries, and no auto-start hook
+(verified: zero registry keys, services, startup entries, or leftover temp
+folders after exit). To uninstall completely:
+
+1. Delete `zwiftguard.exe`.
+2. Delete the files it created in the folder you ran it from: `reports\`,
+   `baseline.json`, and any config `.json` you generated.
+
+That is everything. (While running, Windows briefly extracts the EXE to a
+`_MEIxxxxxx` folder under `%TEMP%`, which is removed automatically on exit;
+after a hard crash a stray one can be deleted harmlessly.) The pip install
+uninstalls with `pip uninstall zwiftguard`.
 
 ## Usage
 
