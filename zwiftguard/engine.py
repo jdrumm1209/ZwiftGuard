@@ -65,6 +65,10 @@ class IntegrityEngine:
         self.zwift_servers: dict[str, list[int]] = {}   # public endpoint ip -> ports
         self.zwift_running: bool = False
         self.zwift_process_list: list[str] = []
+        # rider identity / location shown on the dashboard
+        self.rider: dict[str, Any] = dict(config.get("rider_profile") or {})
+        self.location: dict[str, Any] = {}
+        self.local_ips: list[str] = []
         # registered (trusted) equipment loaded from baseline.json
         self.registry: dict[str, dict[str, Any]] = {}
 
@@ -231,6 +235,22 @@ class IntegrityEngine:
     def set_zwift_running(self, names: list[str]) -> None:
         self.zwift_running = bool(names)
         self.zwift_process_list = names
+
+    def set_location(self, info: dict[str, Any]) -> None:
+        self.location = info
+        where = ", ".join(x for x in (info.get("city"), info.get("country")) if x)
+        self.emit(SEV_INFO, "net-monitor",
+                  f"Connection origin: public IP {info.get('public_ip')} ({where}, "
+                  f"{info.get('timezone')}, ISP: {info.get('org')})",
+                  dict(info), dedupe="geo")
+
+    def set_local_ips(self, ips: list[str]) -> None:
+        self.local_ips = [ip for ip in ips if ip]
+
+    def set_player_id(self, player_id: str, raw_line: str) -> None:
+        self.rider["player_id"] = player_id
+        self.emit(SEV_INFO, "zwift-log", f"Zwift player ID from game log: {player_id}",
+                  {"log_line": raw_line}, dedupe=f"pid:{player_id}")
 
     def observe_blocked_process(self, pid: int, name: str, exe: str, pattern: str) -> None:
         self.emit(SEV_ALERT, "R06-blocked-process",
@@ -399,6 +419,9 @@ class IntegrityEngine:
             "zwift_processes": list(self.zwift_process_list),
             "zwift_servers": {ip: list(ports) for ip, ports in self.zwift_servers.items()},
             "local_adapter_macs": sorted(self._local_adapter_macs),
+            "local_ips": list(self.local_ips),
+            "rider": dict(self.rider),
+            "location": dict(self.location),
             "devices": devices,
             "events": [e.to_dict() for e in list(self.events)[-200:]],
         }

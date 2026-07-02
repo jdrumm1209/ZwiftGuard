@@ -59,9 +59,24 @@ EQUIPMENT                      THIS PC                    ZWIFT CLOUD
 ```
 
 Each device node shows its transport (BLE MAC / ANT+ ID / LAN IP + MAC),
-identity fingerprint, manufacturer IDs, and live signal strength, and is
-colored **green** (verified/unchanged), **amber** (suspicious — review), or
-**red, pulsing** (integrity violation). A live event feed runs underneath.
+identity fingerprint, manufacturer IDs, live signal strength, and exactly
+what it sends and receives, and is colored **green** (verified/unchanged),
+**amber** (suspicious — review), or **red, pulsing** (integrity violation).
+A live event feed runs underneath.
+
+Above the topology, a **rider panel** shows who is riding and where the
+connection originates:
+
+- identity: name, Zwift ID (and the player ID read live from Zwift's own
+  log once the game starts), category, weight;
+- **power profile**: FTP, W/kg, and a 5 s / 1 min / 5 min / 20 min best-power
+  curve — fill these in under `rider_profile` in the config
+  (`--write-config zwiftguard.json`);
+- **connection origin**: public IP, LAN IP, ISP, city/country, and a live
+  clock with the date/time at that location. Location and timezone are
+  auto-detected from the public IP at session start (one HTTPS call to
+  ipapi.co — set `"public_ip_lookup": false` to disable) or can be pinned
+  in `rider_profile.city/country/timezone`.
 
 Alert escalation, in order of loudness:
 

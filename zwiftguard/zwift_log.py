@@ -51,7 +51,13 @@ class ZwiftLogMonitor:
         self._pos = 0
         self._announced_missing = False
 
+    _PLAYER_ID_RE = re.compile(r"player\s*id\D{0,6}(\d{4,12})", re.IGNORECASE)
+
     def _parse_line(self, line: str) -> None:
+        pid = self._PLAYER_ID_RE.search(line)
+        if pid:
+            self.engine.set_player_id(pid.group(1), line.strip())
+            return
         for kind, pat in _PATTERNS:
             m = pat.search(line)
             if not m:

@@ -74,7 +74,16 @@ async def run_session(cfg: dict, duration: float | None, register_path: str | No
     except (ValueError, OSError):
         pass
 
-    monitors = []
+    from . import geo
+    engine.set_local_ips([geo.local_ip()])
+
+    async def geo_task() -> None:
+        if cfg.get("public_ip_lookup", True):
+            info = await asyncio.to_thread(geo.lookup_public_ip)
+            if info:
+                engine.set_location(info)
+
+    monitors = [geo_task()]
     if "ble" not in disable:
         monitors.append(BleMonitor(engine, cfg).run(stop))
     if "log" not in disable:

@@ -71,6 +71,22 @@ DEFAULTS: dict[str, Any] = {
     "zwift_log_poll_interval": 2,
     # Live web dashboard (bound to 127.0.0.1 only)
     "dashboard_port": 8377,
+    # One-time HTTPS lookup of public IP + city/timezone at session start
+    # (ipapi.co) so the dashboard can show origin IP and location-local time.
+    "public_ip_lookup": True,
+    # Rider identity and power profile shown on the dashboard. Fill this in
+    # (or leave city/country/timezone empty to use the IP-detected location).
+    "rider_profile": {
+        "name": "",
+        "zwift_id": "",
+        "category": "",
+        "weight_kg": 0,
+        "ftp_w": 0,
+        "power_bests_w": {"5s": 0, "1m": 0, "5m": 0, "20m": 0},
+        "city": "",
+        "country": "",
+        "timezone": "",
+    },
     # Where session reports are written
     "report_dir": "reports",
     # Trusted-equipment registry created by --register

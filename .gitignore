@@ -8,3 +8,4 @@ dist/
 *.spec
 *.egg-info/
 .claude/
+*.local.json

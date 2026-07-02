@@ -3,12 +3,15 @@
 Serves a single-page view of the whole data path on 127.0.0.1:
 
     EQUIPMENT  ->  radio / LAN link  ->  THIS PC (Zwift)  ->  ZWIFT CLOUD
-    (MAC, ANT+ ID, fingerprints)         (adapter MAC)        (server IPs)
+    (MAC, ANT+ ID, fingerprints)         (adapter MAC, IPs)    (server IPs)
 
-with animated data flows, per-device integrity status (green/amber/red),
-and the live event feed. The page polls /state every 2 seconds; alerts
-flash the tab title, and desktop notifications can be enabled with one
-click (browser Notification API).
+plus a rider panel (identity, power profile, connection-origin IP, and the
+local date/time at the rider's location). Wires are routed orthogonally on
+a bus so nothing overlaps; each device card lists its own data flows.
+
+The page polls /state every 2 seconds; the topology only re-renders when
+its content changes (no animation flicker). Alerts flash the tab title and
+can raise desktop notifications (browser Notification API).
 
 Stdlib only (http.server in a daemon thread) so packaging stays simple.
 """
@@ -82,55 +85,88 @@ DASHBOARD_HTML = """<!doctype html>
 <title>ZwiftGuard</title>
 <style>
   :root{
-    --bg:#0e1420; --card:#161e2e; --edge:#233046; --text:#dbe4f0; --dim:#8093ab;
-    --ok:#2dd4a7; --warn:#eab308; --alert:#ef4444; --accent:#38bdf8;
+    --bg:#0b0f17; --card:#111827; --edge:#1d2942; --text:#e2e9f4; --dim:#7e91ad;
+    --ok:#34d399; --warn:#fbbf24; --alert:#f87171; --accent:#38bdf8;
+    --wire:#3f8cff; --ctrl:#b07af8;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);
-       font:14px/1.45 "Segoe UI",system-ui,sans-serif}
-  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
-         padding:12px 20px;background:var(--card);border-bottom:1px solid var(--edge)}
-  .brand{font-size:18px;font-weight:700;letter-spacing:.3px}
+       font:14px/1.5 "Inter","Segoe UI",system-ui,sans-serif;
+       font-variant-numeric:tabular-nums}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+         padding:12px 22px;background:var(--card);border-bottom:1px solid var(--edge)}
+  .brand{font-size:17px;font-weight:800;letter-spacing:.2px}
   .brand span{color:var(--accent)}
-  .pill{padding:4px 14px;border-radius:999px;font-weight:700;font-size:13px}
-  .pill.ok{background:#0c3b2e;color:var(--ok)}
-  .pill.warn{background:#3b310c;color:var(--warn)}
-  .pill.alert{background:#450f0f;color:var(--alert);animation:pulse 1s infinite}
-  .pill.dead{background:#2a2a2a;color:var(--dim)}
+  .pill{padding:4px 14px;border-radius:999px;font-weight:700;font-size:12.5px;letter-spacing:.4px}
+  .pill.ok{background:#0a2e24;color:var(--ok)}
+  .pill.warn{background:#332908;color:var(--warn)}
+  .pill.alert{background:#3b0d0d;color:var(--alert);animation:pulse 1s infinite}
+  .pill.dead{background:#22262e;color:var(--dim)}
   @keyframes pulse{50%{opacity:.45}}
-  .meta{color:var(--dim);font-size:13px}
+  .meta{color:var(--dim);font-size:12.5px}
   #notifyBtn{margin-left:auto;background:transparent;border:1px solid var(--edge);
-             color:var(--dim);border-radius:8px;padding:5px 12px;cursor:pointer}
+             color:var(--dim);border-radius:8px;padding:5px 12px;cursor:pointer;font-size:12.5px}
   #notifyBtn:hover{color:var(--text);border-color:var(--accent)}
-  main{padding:16px 20px;display:grid;gap:16px}
-  .card{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:14px 16px}
-  .card h2{margin:0 0 10px;font-size:13px;font-weight:600;color:var(--dim);
-           text-transform:uppercase;letter-spacing:1px}
+  main{padding:16px 22px;display:grid;gap:14px;max-width:1280px;margin:0 auto}
+  .card{background:var(--card);border:1px solid var(--edge);border-radius:14px;
+        padding:14px 18px;box-shadow:0 10px 26px rgba(0,0,0,.32)}
+  .card h2{margin:0 0 12px;font-size:11.5px;font-weight:700;color:var(--dim);
+           text-transform:uppercase;letter-spacing:1.6px}
+  /* ---- rider panel ---- */
+  .rider{display:flex;gap:22px;align-items:stretch;flex-wrap:wrap}
+  .avatar{width:58px;height:58px;border-radius:50%;flex:0 0 auto;align-self:center;
+          display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:800;
+          background:linear-gradient(135deg,#0ea5e9,#6366f1);color:#fff}
+  .rblock{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:170px}
+  .rname{font-size:16.5px;font-weight:700}
+  .rsub{color:var(--dim);font-size:12.5px}
+  .rsub b{color:var(--text);font-weight:600}
+  .mono{font-family:Consolas,monospace;font-size:12px}
+  .vdiv{width:1px;background:var(--edge);align-self:stretch}
+  .bigrow{display:flex;align-items:baseline;gap:6px}
+  .big{font-size:24px;font-weight:800;color:var(--accent)}
+  .big2{font-size:24px;font-weight:800;color:#a5b4fc;margin-left:14px}
+  .unit{color:var(--dim);font-size:12px;font-weight:600}
+  .bars{display:grid;grid-template-columns:34px 1fr 52px;gap:3px 8px;margin-top:6px;
+        align-items:center;min-width:230px}
+  .bars .lb{color:var(--dim);font-size:11.5px;text-align:right}
+  .bars .tr{background:#0a101d;border-radius:4px;height:9px;overflow:hidden}
+  .bars .fl{height:100%;border-radius:4px;background:linear-gradient(90deg,#0ea5e9,#818cf8)}
+  .bars .w{font-size:11.5px;color:var(--text)}
+  .rtime{font-size:23px;font-weight:800;letter-spacing:.5px}
+  /* ---- topology ---- */
   svg{width:100%;display:block}
-  svg text{font:13px "Segoe UI",system-ui,sans-serif;fill:var(--text)}
-  svg .sub{fill:var(--dim);font-size:12px}
-  svg .flow{fill:var(--accent);font-size:12px;font-weight:600}
-  svg .flowup{fill:#c084fc;font-size:12px}
-  svg .colhead{fill:var(--dim);font-size:12px;font-weight:700;letter-spacing:1.5px}
-  .node{fill:#101827;stroke-width:1.6;rx:10}
+  svg text{font:12.5px "Inter","Segoe UI",system-ui,sans-serif;fill:var(--text)}
+  svg .sub{fill:var(--dim);font-size:11.5px}
+  svg .ttl{font-weight:700;font-size:13px}
+  svg .flow{fill:var(--wire);font-size:11.5px}
+  svg .flowup{fill:var(--ctrl);font-size:11.5px}
+  svg .colhead{fill:var(--dim);font-size:11px;font-weight:700;letter-spacing:1.8px}
+  svg .statusw{font-size:11px;font-weight:700}
+  .node{fill:#0f1626;stroke-width:1.4;rx:12}
   .node.ok{stroke:var(--ok)} .node.warn{stroke:var(--warn)}
   .node.alert{stroke:var(--alert);animation:pulse 1s infinite}
   .node.hub{stroke:var(--accent)} .node.cloud{stroke:#818cf8}
-  path.wire{fill:none;stroke:#3b82f6;stroke-width:2;stroke-dasharray:7 6;
-            animation:dashmove 1.2s linear infinite;opacity:.85}
-  path.wire.up{stroke:#c084fc;stroke-width:1.4;animation-direction:reverse;opacity:.6}
-  path.wire.dead{stroke:#37445c;animation:none}
+  path.wire{fill:none;stroke:var(--wire);stroke-width:1.7;stroke-linejoin:round;
+            stroke-dasharray:6 7;animation:dashmove 1.1s linear infinite;opacity:.95}
+  path.wire.up{stroke:var(--ctrl);stroke-width:1.4;opacity:.75}
+  path.wire.dead{stroke:#33415e;animation:none;opacity:.6}
   @keyframes dashmove{to{stroke-dashoffset:-13}}
-  #events{max-height:340px;overflow-y:auto;font-size:13px}
-  .ev{display:flex;gap:10px;padding:5px 4px;border-bottom:1px solid #1c2536;align-items:baseline}
-  .ev .t{color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums}
-  .chip{font-size:11px;font-weight:700;border-radius:5px;padding:1px 8px;white-space:nowrap}
-  .chip.INFO{background:#0c2d3b;color:var(--accent)}
-  .chip.WARN{background:#3b310c;color:var(--warn)}
-  .chip.ALERT{background:#450f0f;color:var(--alert)}
-  .ev .r{color:var(--dim);white-space:nowrap}
-  .legend{display:flex;gap:18px;color:var(--dim);font-size:12px;margin-top:8px}
-  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+  /* ---- events ---- */
+  #events{max-height:320px;overflow-y:auto;font-size:12.5px}
+  #events::-webkit-scrollbar{width:9px}
+  #events::-webkit-scrollbar-thumb{background:#243350;border-radius:5px}
+  .ev{display:grid;grid-template-columns:64px 58px 150px 1fr;gap:10px;
+      padding:5px 6px;border-bottom:1px solid #16203a;align-items:baseline}
+  .ev:hover{background:#0e1524}
+  .ev .t{color:var(--dim);white-space:nowrap}
+  .chip{font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 0;text-align:center}
+  .chip.INFO{background:#0a2532;color:var(--accent)}
+  .chip.WARN{background:#332908;color:var(--warn)}
+  .chip.ALERT{background:#3b0d0d;color:var(--alert)}
+  .ev .r{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .legend{display:flex;gap:20px;color:var(--dim);font-size:12px;margin-top:10px;flex-wrap:wrap}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
 </style>
 </head>
 <body>
@@ -144,14 +180,40 @@ DASHBOARD_HTML = """<!doctype html>
 </header>
 <main>
   <div class="card">
+    <h2>Rider &amp; connection origin</h2>
+    <div class="rider">
+      <div class="avatar" id="rAvatar">?</div>
+      <div class="rblock">
+        <div class="rname" id="rName">&mdash;</div>
+        <div class="rsub" id="rIds"></div>
+        <div class="rsub" id="rCat"></div>
+      </div>
+      <div class="vdiv"></div>
+      <div class="rblock">
+        <div class="bigrow">
+          <span class="big" id="rFtp">&mdash;</span><span class="unit">W FTP</span>
+          <span class="big2" id="rWkg">&mdash;</span><span class="unit">W/kg</span>
+        </div>
+        <div class="bars" id="rBars"></div>
+      </div>
+      <div class="vdiv"></div>
+      <div class="rblock">
+        <div class="rsub"><b id="rWhere">detecting location&hellip;</b></div>
+        <div class="rtime" id="rTime">&mdash;&thinsp;:&thinsp;&mdash;</div>
+        <div class="rsub" id="rDate"></div>
+        <div class="rsub mono" id="rIps"></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
     <h2>Equipment &rarr; Zwift data path</h2>
-    <svg id="topo" viewBox="0 0 1140 300" preserveAspectRatio="xMidYMin meet"></svg>
+    <svg id="topo" viewBox="0 0 1160 320" preserveAspectRatio="xMidYMin meet"></svg>
     <div class="legend">
       <span><span class="dot" style="background:var(--ok)"></span>verified / unchanged</span>
       <span><span class="dot" style="background:var(--warn)"></span>suspicious &mdash; review</span>
       <span><span class="dot" style="background:var(--alert)"></span>integrity violation</span>
-      <span><span class="dot" style="background:#3b82f6"></span>sensor data &rarr;</span>
-      <span><span class="dot" style="background:#c084fc"></span>&larr; control (ERG / gradient)</span>
+      <span><span class="dot" style="background:var(--wire)"></span>sensor data &rarr;</span>
+      <span><span class="dot" style="background:var(--ctrl)"></span>&larr; control (ERG / gradient)</span>
     </div>
   </div>
   <div class="card">
@@ -161,165 +223,233 @@ DASHBOARD_HTML = """<!doctype html>
 </main>
 <script>
 const FLOWS = {
-  "1826": {down:"power \\u00b7 cadence \\u00b7 speed", up:"resistance \\u00b7 gradient (ERG)"},
-  "1818": {down:"power \\u00b7 cadence", up:null},
-  "180d": {down:"heart rate", up:null},
-  "1816": {down:"speed \\u00b7 cadence", up:null},
-  "1814": {down:"pace \\u00b7 cadence", up:null}
+  "1826": {down:["power","cadence","speed"], up:["resistance","gradient (ERG)"]},
+  "1818": {down:["power","cadence"], up:[]},
+  "180d": {down:["heart rate"], up:[]},
+  "1816": {down:["speed","cadence"], up:[]},
+  "1814": {down:["pace","cadence"], up:[]}
 };
-let prevAlerts = 0, dead = false;
+const STATUS_TXT = {ok:["\\u25cf verified","var(--ok)"], warn:["\\u25cf suspicious","var(--warn)"],
+                    alert:["\\u25cf VIOLATION","var(--alert)"]};
+let prevAlerts=0, dead=false, topoKey="", evKey="", tz=null;
 
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 
 function deviceFlows(d){
   let down=[], up=[];
-  for(const s of (d.services||[])){ const f=FLOWS[s]; if(f){ down.push(f.down); if(f.up) up.push(f.up);} }
-  if(d.source==="ant"){ down.push("ANT+ broadcast ("+esc(d.name||"sensor")+")"); }
-  if(d.source==="network"){ down.push("trainer telemetry (direct connect)"); up.push("control"); }
+  for(const s of (d.services||[])){ const f=FLOWS[s]; if(f){ down.push(...f.down); up.push(...f.up);} }
+  if(d.source==="ant") down.push("ANT+ broadcast");
+  if(d.source==="network"){ down.push("trainer telemetry"); up.push("resistance control"); }
   if(!down.length) down.push("sensor data");
   return {down:[...new Set(down)].join(" \\u00b7 "), up:[...new Set(up)].join(" \\u00b7 ")};
 }
-
 function transportLine(d){
   if(d.source==="ble") return "BLE \\u00b7 MAC "+esc(d.address);
   if(d.source==="ant") return "ANT+ \\u00b7 device ID "+esc(d.address);
-  return "LAN \\u00b7 "+esc(d.address)+(d.mac?" \\u00b7 MAC "+esc(d.mac):"");
+  return "LAN \\u00b7 IP "+esc(d.address)+(d.mac?" \\u00b7 MAC "+esc(d.mac):"");
+}
+function textEl(x,y,cls,str,anchor){
+  return `<text class="${cls}" x="${x}" y="${y}"${anchor?` text-anchor="${anchor}"`:""}>${str}</text>`;
 }
 
-function node(x,y,w,h,cls,lines){
-  let out = `<rect class="node ${cls}" x="${x}" y="${y}" width="${w}" height="${h}" rx="10"/>`;
-  let ty = y+20;
-  for(const ln of lines){
-    out += `<text class="${ln.cls||''}" x="${x+12}" y="${ty}" font-weight="${ln.b?'700':'400'}">${ln.t}</text>`;
-    ty += ln.gap||16;
-  }
-  return out;
-}
+function renderTopo(s){
+  const devs = s.devices;
+  const rowH=140, cardH=118, top=34;
+  const H = Math.max(devs.length*rowH+top+6, 320);
+  const DX=16, DW=318, BUS1=372, BUS2=386, PCX=452, PCW=300, CLX=856, CLW=288;
+  const pcH=138, pcY=H/2-pcH/2;
+  const pcDataY=pcY+pcH/2-12, pcCtlY=pcY+pcH/2+16;
+  let svg = `<defs>
+    <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L8 4 L0 8 z" fill="var(--wire)"/></marker>
+    <marker id="arrp" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L8 4 L0 8 z" fill="var(--ctrl)"/></marker>
+  </defs>`;
+  svg += textEl(DX+2,18,"colhead","EQUIPMENT");
+  svg += textEl(PCX+2,18,"colhead","THIS PC");
+  svg += textEl(CLX+2,18,"colhead","ZWIFT CLOUD");
+  const deadCls = dead?" dead":"";
 
-function wire(x1,y1,x2,y2,cls){
-  const mx=(x1+x2)/2;
-  return `<path class="wire ${cls}" d="M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}"/>`;
-}
+  if(!devs.length)
+    svg += textEl(DX+8,80,"sub","No equipment observed yet \\u2014 wake your sensors\\u2026");
 
-function render(s){
-  const equip = s.devices.filter(d=>d.source!=="network"||true);
-  const rows = Math.max(equip.length,1);
-  const rowH = 110, topPad = 34;
-  const H = Math.max(rows*rowH+topPad+10, 300);
-  const EQX=10, EQW=290, PCX=450, PCW=250, CLX=820, CLW=310;
-  const pcY = H/2-62, pcH = 124, clY = H/2-62;
-  let svg = "";
-  svg += `<text class="colhead" x="${EQX+4}" y="18">EQUIPMENT</text>`;
-  svg += `<text class="colhead" x="${PCX+4}" y="18">THIS PC</text>`;
-  svg += `<text class="colhead" x="${CLX+4}" y="18">ZWIFT CLOUD</text>`;
-
-  if(!equip.length){
-    svg += `<text class="sub" x="${EQX+8}" y="70">No equipment observed yet &mdash; wake your sensors&hellip;</text>`;
-  }
-  equip.forEach((d,i)=>{
-    const y = topPad + i*rowH, h = 88, yc = y+h/2;
-    const fl = deviceFlows(d);
-    const rssi = d.rssi_last!=null ? `RSSI ${d.rssi_last} dBm` : "";
-    const cids = (d.company_ids&&d.company_ids.length)? "mfr 0x"+d.company_ids.map(c=>c.toString(16).padStart(4,"0")).join(", 0x") : "";
-    svg += node(EQX,y,EQW,h,d.status,[
-      {t:esc(d.name||"(no name)"),b:1},
-      {t:transportLine(d),cls:"sub"},
-      {t:"fingerprint "+esc(d.identity_hash)+(cids?" \\u00b7 "+cids:""),cls:"sub"},
-      {t:rssi,cls:"sub"}
-    ]);
-    const deadCls = dead ? "dead" : "";
-    svg += wire(EQX+EQW, yc-6, PCX, pcY+pcH/2, deadCls);
-    svg += `<text class="flow" x="${(EQX+EQW+PCX)/2-90}" y="${(yc+pcY+pcH/2)/2-10}">&rarr; ${fl.down}</text>`;
-    if(fl.up){
-      svg += wire(PCX, pcY+pcH/2+10, EQX+EQW, yc+8, "up "+deadCls);
-      svg += `<text class="flowup" x="${(EQX+EQW+PCX)/2-90}" y="${(yc+pcY+pcH/2)/2+16}">&larr; ${fl.up}</text>`;
-    }
+  devs.forEach((d,i)=>{
+    const y=top+i*rowH, yc=y+cardH/2;
+    const fl=deviceFlows(d);
+    const st=STATUS_TXT[d.status]||STATUS_TXT.ok;
+    const cids=(d.company_ids&&d.company_ids.length)
+      ? " \\u00b7 mfr 0x"+d.company_ids.map(c=>c.toString(16).padStart(4,"0")).join(", 0x") : "";
+    svg += `<rect class="node ${d.status}" x="${DX}" y="${y}" width="${DW}" height="${cardH}" rx="12"/>`;
+    const nm=(d.name||"(no name)");
+    svg += textEl(DX+14,y+22,"ttl",esc(nm.length>24?nm.slice(0,23)+"\\u2026":nm));
+    svg += `<text class="statusw" x="${DX+DW-14}" y="${y+22}" text-anchor="end" fill="${st[1]}">${st[0]}</text>`;
+    svg += textEl(DX+14,y+41,"sub",transportLine(d));
+    svg += textEl(DX+14,y+58,"sub","fingerprint "+esc(d.identity_hash)+cids);
+    svg += textEl(DX+14,y+75,"sub",(d.rssi_last!=null?"RSSI "+d.rssi_last+" dBm":""));
+    svg += textEl(DX+14,y+94,"flow","\\u2192 sends: "+fl.down);
+    if(fl.up) svg += textEl(DX+14,y+111,"flowup","\\u2190 gets: "+fl.up);
+    // data wire: card -> bus -> PC inlet
+    svg += `<path class="wire${deadCls}" marker-end="url(#arr)"
+      d="M ${DX+DW} ${yc-8} H ${BUS1} V ${pcDataY} H ${PCX-3}"/>`;
+    if(fl.up)
+      svg += `<path class="wire up${deadCls}" marker-end="url(#arrp)"
+        d="M ${PCX} ${pcCtlY} H ${BUS2} V ${yc+10} H ${DX+DW+3}"/>`;
   });
 
+  // PC node
   const zw = s.zwift_running ? esc(s.zwift_processes.join(", ")) : "Zwift not detected";
-  svg += node(PCX,pcY,PCW,pcH,"hub",[
-    {t:"Zwift app",b:1},
-    {t:zw,cls:"sub"},
-    {t:(s.local_adapter_macs&&s.local_adapter_macs.length)?"BT adapter "+esc(s.local_adapter_macs[0]):"",cls:"sub"},
-    {t:"ZwiftGuard watching \\u2713",cls:"sub"}
-  ]);
+  svg += `<rect class="node hub" x="${PCX}" y="${pcY}" width="${PCW}" height="${pcH}" rx="12"/>`;
+  svg += textEl(PCX+14,pcY+22,"ttl","Zwift host PC");
+  svg += textEl(PCX+14,pcY+41,"sub",zw);
+  svg += textEl(PCX+14,pcY+58,"sub",(s.local_ips&&s.local_ips[0])?"LAN IP "+esc(s.local_ips[0]):"");
+  svg += textEl(PCX+14,pcY+75,"sub",(s.local_adapter_macs&&s.local_adapter_macs[0])?"BT adapter "+esc(s.local_adapter_macs[0]):"");
+  svg += textEl(PCX+14,pcY+92,"sub",(s.location&&s.location.public_ip)?"public IP "+esc(s.location.public_ip):"");
+  svg += textEl(PCX+14,pcY+115,"sub","ZwiftGuard watching \\u2713");
 
-  const srvIps = Object.keys(s.zwift_servers||{});
-  const srvLines = [{t:"Zwift servers",b:1}];
-  if(srvIps.length){
-    srvIps.slice(0,5).forEach(ip=>srvLines.push({t:esc(ip)+" : "+s.zwift_servers[ip].join(", "),cls:"sub"}));
-    if(srvIps.length>5) srvLines.push({t:"+"+(srvIps.length-5)+" more endpoints",cls:"sub"});
+  // cloud node (flow descriptions live inside the card so they never
+  // collide with the wires, whatever the scale)
+  const ips=Object.keys(s.zwift_servers||{});
+  const lines=[{c:"flow",t:"\\u2190 receives: ride telemetry (TLS)"},
+               {c:"flowup",t:"\\u2192 sends: world state \\u00b7 other riders"}];
+  if(ips.length){
+    ips.slice(0,6).forEach(ip=>lines.push({c:"sub mono",t:esc(ip)+" : "+s.zwift_servers[ip].join(", ")}));
+    if(ips.length>6) lines.push({c:"sub",t:"+"+(ips.length-6)+" more endpoints"});
   } else {
-    srvLines.push({t:"no server connections observed",cls:"sub"});
-    srvLines.push({t:"(start Zwift to see game endpoints)",cls:"sub"});
+    lines.push({c:"sub",t:"no server connections observed"});
+    lines.push({c:"sub",t:"(start Zwift to see endpoints)"});
   }
-  const clH = Math.max(60, 34+srvLines.length*16);
-  svg += node(CLX,clY,CLW,clH,"cloud",srvLines);
-  const cloudDead = (dead||!srvIps.length) ? "dead" : "";
-  svg += wire(PCX+PCW, pcY+pcH/2-6, CLX, clY+clH/2, cloudDead);
-  svg += `<text class="flow" x="${(PCX+PCW+CLX)/2-105}" y="${(pcY+clY+clH/2+pcH/2)/2-10}">&rarr; ride telemetry (TLS)</text>`;
-  svg += wire(CLX, clY+clH/2+10, PCX+PCW, pcY+pcH/2+8, "up "+cloudDead);
-  svg += `<text class="flowup" x="${(PCX+PCW+CLX)/2-105}" y="${(pcY+clY+clH/2+pcH/2)/2+16}">&larr; world state \\u00b7 other riders</text>`;
+  const clH=Math.max(110, 44+lines.length*17);
+  const clY=H/2-clH/2;
+  svg += `<rect class="node cloud" x="${CLX}" y="${clY}" width="${CLW}" height="${clH}" rx="12"/>`;
+  svg += textEl(CLX+14,clY+22,"ttl","Zwift servers");
+  lines.forEach((ln,i)=>{ svg += textEl(CLX+14,clY+44+i*17,ln.c,ln.t); });
 
-  const t = document.getElementById("topo");
-  t.setAttribute("viewBox", `0 0 1140 ${H}`);
-  t.innerHTML = svg;
+  // trunk PC <-> cloud
+  const cloudDead=(dead||!ips.length)?" dead":"";
+  svg += `<path class="wire${cloudDead}" marker-end="url(#arr)"
+    d="M ${PCX+PCW} ${pcDataY} H ${CLX-3}"/>`;
+  svg += `<path class="wire up${cloudDead}" marker-end="url(#arrp)"
+    d="M ${CLX} ${pcCtlY} H ${PCX+PCW+3}"/>`;
 
-  // header
-  const c = s.severity_counts;
-  const v = document.getElementById("verdict");
-  v.textContent = s.verdict;
-  v.className = "pill " + (c.ALERT? "alert" : c.WARN? "warn" : "ok");
-  document.getElementById("counts").textContent =
+  const t=document.getElementById("topo");
+  t.setAttribute("viewBox",`0 0 1160 ${H}`);
+  t.innerHTML=svg;
+}
+
+function renderRider(s){
+  const r=s.rider||{}, loc=s.location||{};
+  const name=r.name||"Rider";
+  document.getElementById("rName").textContent=name;
+  document.getElementById("rAvatar").textContent =
+    (name.match(/\\b\\w/g)||["?"]).slice(0,2).join("").toUpperCase();
+  const ids=[];
+  if(r.zwift_id) ids.push("Zwift ID "+r.zwift_id);
+  if(r.player_id) ids.push("player "+r.player_id+" (from game log)");
+  document.getElementById("rIds").textContent=ids.join(" \\u00b7 ")||"set rider_profile in config (--write-config)";
+  const cat=[];
+  if(r.category) cat.push("Cat "+r.category);
+  if(r.weight_kg) cat.push(r.weight_kg+" kg");
+  document.getElementById("rCat").textContent=cat.join(" \\u00b7 ");
+  document.getElementById("rFtp").textContent=r.ftp_w||"\\u2014";
+  document.getElementById("rWkg").textContent=
+    (r.ftp_w&&r.weight_kg)?(r.ftp_w/r.weight_kg).toFixed(1):"\\u2014";
+  const bests=r.power_bests_w||{};
+  const order=["5s","1m","5m","20m"];
+  const vals=order.map(k=>bests[k]||0), mx=Math.max(...vals,1);
+  document.getElementById("rBars").innerHTML = vals.some(v=>v)
+    ? order.map((k,i)=>`<span class="lb">${k}</span>
+        <span class="tr"><span class="fl" style="width:${Math.round(vals[i]/mx*100)}%"></span></span>
+        <span class="w">${vals[i]?vals[i]+" W":"\\u2014"}</span>`).join("")
+    : `<span class="lb"></span><span class="rsub" style="grid-column:2/4">add power_bests_w to config to show your power curve</span>`;
+  // location + clocks
+  tz = r.timezone || loc.timezone || null;
+  const cityCfg=[r.city,r.country].filter(Boolean).join(", ");
+  const cityIp=[loc.city,loc.country].filter(Boolean).join(", ");
+  const where=cityCfg||cityIp;
+  document.getElementById("rWhere").textContent =
+    where ? where+(cityCfg?"":" (via IP)") : (s.now?"location unknown":"detecting location\\u2026");
+  const ipbits=[];
+  if(loc.public_ip) ipbits.push("public "+loc.public_ip);
+  if(s.local_ips&&s.local_ips[0]) ipbits.push("LAN "+s.local_ips[0]);
+  if(loc.org) ipbits.push(loc.org);
+  document.getElementById("rIps").textContent=ipbits.join(" \\u00b7 ");
+  tickClock();
+}
+
+function tickClock(){
+  const now=new Date();
+  const o=tz?{timeZone:tz}:{};
+  try{
+    document.getElementById("rTime").textContent =
+      new Intl.DateTimeFormat("en-GB",{...o,hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(now);
+    document.getElementById("rDate").textContent =
+      new Intl.DateTimeFormat("en-GB",{...o,weekday:"short",day:"numeric",month:"short",year:"numeric"}).format(now)
+      +" \\u00b7 "+(tz||"system time");
+  }catch(e){ tz=null; }
+}
+setInterval(tickClock,1000);
+
+function render(s){
+  // topology: only rebuild when content actually changes (keeps animation smooth)
+  const key=JSON.stringify([s.devices.map(d=>[d.address,d.name,d.status,d.services,d.source,d.mac,
+      d.identity_hash,Math.round((d.rssi_last||0)/6)]),
+    s.zwift_servers,s.zwift_running,s.local_ips,s.local_adapter_macs,
+    (s.location||{}).public_ip,dead]);
+  if(key!==topoKey){ topoKey=key; renderTopo(s); }
+  renderRider(s);
+
+  const c=s.severity_counts;
+  const v=document.getElementById("verdict");
+  v.textContent=s.verdict;
+  v.className="pill "+(c.ALERT?"alert":c.WARN?"warn":"ok");
+  document.getElementById("counts").textContent=
     `${s.devices.length} device(s) \\u00b7 ${c.INFO||0} info / ${c.WARN||0} warn / ${c.ALERT||0} alert`;
-  const el = Math.floor(s.now - s.started);
-  document.getElementById("clock").textContent =
-    "session " + String(Math.floor(el/60)).padStart(2,"0")+":"+String(el%60).padStart(2,"0");
-  document.getElementById("baseline").textContent =
-    s.baseline_locked ? "baseline: LOCKED \\ud83d\\udd12" : "baseline: learning\\u2026";
+  const el=Math.floor(s.now-s.started);
+  document.getElementById("clock").textContent=
+    "session "+String(Math.floor(el/60)).padStart(2,"0")+":"+String(el%60).padStart(2,"0");
+  document.getElementById("baseline").textContent=
+    s.baseline_locked?"baseline: LOCKED \\ud83d\\udd12":"baseline: learning\\u2026";
 
-  // events (newest first)
-  const evs = [...s.events].reverse();
-  document.getElementById("events").innerHTML = evs.map(e=>{
-    const d = new Date(e.ts*1000);
-    const hh = d.toTimeString().slice(0,8);
-    return `<div class="ev"><span class="t">${hh}</span>`+
-           `<span class="chip ${e.severity}">${e.severity}</span>`+
-           `<span class="r">${esc(e.rule)}</span><span>${esc(e.message)}</span></div>`;
-  }).join("");
-
-  // alert escalation: tab title + desktop notification
-  if((c.ALERT||0) > prevAlerts){
-    document.title = "\\ud83d\\udd34 ALERT \\u2014 ZwiftGuard";
-    const last = evs.find(e=>e.severity==="ALERT");
-    if(last && "Notification" in window && Notification.permission==="granted"){
-      new Notification("ZwiftGuard \\u2014 integrity ALERT", {body:last.message});
-    }
-  } else if(!(c.ALERT||0)){
-    document.title = "ZwiftGuard";
+  const evs=[...s.events].reverse();
+  const ek=evs.length+":"+(evs[0]?evs[0].hash:"");
+  if(ek!==evKey){
+    evKey=ek;
+    document.getElementById("events").innerHTML=evs.map(e=>{
+      const hh=new Date(e.ts*1000).toTimeString().slice(0,8);
+      return `<div class="ev"><span class="t">${hh}</span>`+
+             `<span class="chip ${e.severity}">${e.severity}</span>`+
+             `<span class="r">${esc(e.rule)}</span><span>${esc(e.message)}</span></div>`;
+    }).join("");
   }
-  prevAlerts = c.ALERT||0;
+
+  if((c.ALERT||0)>prevAlerts){
+    document.title="\\ud83d\\udd34 ALERT \\u2014 ZwiftGuard";
+    const last=evs.find(e=>e.severity==="ALERT");
+    if(last&&"Notification" in window&&Notification.permission==="granted")
+      new Notification("ZwiftGuard \\u2014 integrity ALERT",{body:last.message});
+  } else if(!(c.ALERT||0)) document.title="ZwiftGuard";
+  prevAlerts=c.ALERT||0;
 }
 
 function askNotify(){
   if("Notification" in window) Notification.requestPermission().then(p=>{
-    document.getElementById("notifyBtn").textContent =
-      p==="granted" ? "\\u2705 Desktop alerts on" : "\\u274c Alerts blocked";
+    document.getElementById("notifyBtn").textContent=
+      p==="granted"?"\\u2705 Desktop alerts on":"\\u274c Alerts blocked";
   });
 }
 
 async function poll(){
   try{
-    const s = await fetch("/state",{cache:"no-store"}).then(r=>r.json());
-    dead = false;
+    const s=await fetch("/state",{cache:"no-store"}).then(r=>r.json());
+    if(dead){dead=false;topoKey="";}
     render(s);
   }catch(e){
-    dead = true;
-    const v = document.getElementById("verdict");
-    v.textContent = "MONITOR STOPPED"; v.className = "pill dead";
+    if(!dead){dead=true;topoKey="";}
+    const v=document.getElementById("verdict");
+    v.textContent="MONITOR STOPPED";v.className="pill dead";
   }
 }
-poll(); setInterval(poll, 2000);
+poll(); setInterval(poll,2000);
 </script>
 </body>
 </html>
