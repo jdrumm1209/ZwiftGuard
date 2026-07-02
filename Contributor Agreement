@@ -1,0 +1,40 @@
+Contributor Agreement (CA)
+Version 1.0 — 2026
+
+This Contributor Agreement (“Agreement”) governs contributions made to
+the repository owned by Jason Drumm (“Owner”).
+
+1. Definitions
+“Contribution” means any code, documentation, fixes, comments, or other
+materials submitted to the repository.
+
+2. Rights Granted to Owner
+By submitting a Contribution, you grant the Owner:
+- A perpetual, irrevocable, worldwide, royalty-free license to use,
+  modify, reproduce, and distribute your Contribution.
+- Full ownership rights over the Contribution as part of the Software.
+
+3. Contributor Responsibilities
+You represent and warrant that:
+- You are the original author of your Contribution.
+- Your Contribution does not violate any third-party rights.
+- Your Contribution is not subject to any conflicting license.
+
+4. No Rights Granted to Contributor
+Submitting a Contribution does NOT grant you:
+- Ownership of the Software
+- Permission to use the Software outside this repository
+- Any commercial or distribution rights
+
+5. Confidentiality
+All discussions, code, and materials within the repository are
+confidential and may not be shared externally without written permission
+from the Owner.
+
+6. Revocation
+The Owner may revoke your contributor access at any time. Upon revocation,
+you must delete all local copies of the Software and cease all use.
+
+7. Acceptance
+By submitting a Contribution, you acknowledge and agree to the terms of
+this Agreement.
