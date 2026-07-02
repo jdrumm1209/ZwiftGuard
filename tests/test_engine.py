@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Jason Drummond. All rights reserved.
-# Proprietary software: see the "Proprietary License" file in this
-# repository. No use, copying, or redistribution without written consent.
+# Proprietary software: see the "Proprietary License" file. Personal,
+# non-commercial use of official releases is permitted; all other use,
+# copying, or redistribution requires written consent.
 """Rule-engine tests using synthetic observations (no hardware required).
 
 Run:  python -m tests.test_engine

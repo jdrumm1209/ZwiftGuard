@@ -1,41 +1,59 @@
 Proprietary License (PL)
-Version 1.0 — 2026
+Version 1.1 — 2026
 
 Copyright (c) 2026 Jason Drummond
 All rights reserved.
 
 1. Ownership
 All source code, documentation, and related materials in this repository
-("the Software") are the exclusive intellectual property of Jason Drummond.
-No transfer of ownership is granted by accessing, viewing, or contributing
-to the Software.
+("the Software") are the exclusive intellectual property of Jason Drummond
+("the Owner"). No transfer of ownership is granted by accessing, viewing,
+using, or contributing to the Software.
 
 2. Permitted Use
-You may view the Software and, if granted explicit written permission,
-contribute modifications solely for the purpose of collaboration within
-this repository.
+You may:
+- View and study the Software within this repository.
+- Download, install, and run official release builds of the Software (as
+  published on this repository's Releases page) for PERSONAL,
+  NON-COMMERCIAL purposes only.
+- Contribute modifications, if granted explicit written permission, solely
+  for the purpose of collaboration within this repository.
+
+The personal-use grant above is provided free of charge, is
+non-transferable, and may be updated or withdrawn by the Owner in future
+versions of this License.
 
 3. Prohibited Use
 Unless you receive explicit written authorization from Jason Drummond, you
 may NOT:
-- Copy, reproduce, or distribute the Software
+- Copy, reproduce, or redistribute the Software or its source code
 - Modify or create derivative works outside this repository
-- Use the Software in any commercial, academic, or personal project
+- Use the Software, in whole or in part, in any commercial or academic
+  project, product, or service
 - Publish, sublicense, or incorporate the Software into other codebases
+- Sell, rent, lease, host, or offer the Software as a service
 
-4. Contributions
+4. Commercial Licensing
+Commercial use, integration, distribution, and collaboration licenses are
+available at the Owner's discretion and on terms to be agreed in writing.
+Parties interested in commercial arrangements should contact the Owner via
+GitHub (github.com/jdrumm1209). Nothing in this License limits the Owner's
+right to grant separate commercial licenses on any terms.
+
+5. Contributions
 Any contributions made to the Software become the exclusive property of
-Jason Drummond. Contributors waive any claim of ownership or rights to their
-submitted code.
+Jason Drummond, as set out in the Contributor Agreement. Contributors waive
+any claim of ownership or rights to their submitted code.
 
-5. No Warranty
-The Software is provided “as is” without warranty of any kind. Jason
+6. No Warranty
+The Software is provided "as is" without warranty of any kind. Jason
 Drummond is not liable for any damages arising from use or inability to use
 the Software.
 
-6. Termination
-Permission to collaborate may be revoked at any time. Upon revocation,
+7. Termination
+Any permission granted under this License, including the personal-use
+grant and collaborator access, may be revoked at any time. Upon revocation,
 you must cease all use of the Software and delete any local copies.
 
-By accessing or contributing to this repository, you agree to the terms
-of this Proprietary License.
+By accessing, using, or contributing to this repository, you agree to the
+terms of this Proprietary License.

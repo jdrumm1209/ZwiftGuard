@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Jason Drummond. All rights reserved.
-# Proprietary software: see the "Proprietary License" file in this
-# repository. No use, copying, or redistribution without written consent.
+# Proprietary software: see the "Proprietary License" file. Personal,
+# non-commercial use of official releases is permitted; all other use,
+# copying, or redistribution requires written consent.
 """Live web dashboard.
 
 Serves a single-page view of the whole data path on 127.0.0.1:
@@ -81,7 +82,8 @@ class Dashboard:
 
 
 DASHBOARD_HTML = """<!doctype html>
-<!-- Copyright (c) 2026 Jason Drummond. All rights reserved. Proprietary software. -->
+<!-- Copyright (c) 2026 Jason Drummond. All rights reserved. Proprietary software;
+     personal, non-commercial use permitted. See the Proprietary License. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
