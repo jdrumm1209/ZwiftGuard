@@ -1,0 +1,32 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install package and PyInstaller
+        run: pip install . pyinstaller
+      - name: Run tests
+        run: python -m tests.test_engine
+      - name: Build standalone EXE
+        run: pyinstaller --onefile --console --name zwiftguard launcher.py
+      - name: Smoke-test the EXE
+        run: |
+          dist\zwiftguard.exe --write-config smoke-config.json
+          dist\zwiftguard.exe --help
+      - name: Publish GitHub release with EXE
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/zwiftguard.exe
+          generate_release_notes: true
