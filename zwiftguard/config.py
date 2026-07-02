@@ -69,6 +69,8 @@ DEFAULTS: dict[str, Any] = {
     "process_poll_interval": 10,
     "network_poll_interval": 8,
     "zwift_log_poll_interval": 2,
+    # Live web dashboard (bound to 127.0.0.1 only)
+    "dashboard_port": 8377,
     # Where session reports are written
     "report_dir": "reports",
     # Trusted-equipment registry created by --register

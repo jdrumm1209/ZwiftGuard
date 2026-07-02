@@ -44,10 +44,24 @@ def _enable_ansi() -> None:
 
 
 async def run_session(cfg: dict, duration: float | None, register_path: str | None,
-                      disable: set[str]) -> int:
+                      disable: set[str], open_browser: bool = True) -> int:
     engine = IntegrityEngine(cfg)
     if not register_path:
         engine.load_registry(cfg.get("baseline_file", "baseline.json"))
+
+    dashboard = None
+    if "dash" not in disable:
+        from .dashboard import Dashboard
+        try:
+            dashboard = Dashboard(engine, cfg.get("dashboard_port", 8377))
+            url = dashboard.start()
+            engine.emit("INFO", "dashboard", f"Live dashboard: {url}")
+            if open_browser and not register_path:
+                import webbrowser
+                webbrowser.open(url)
+        except OSError as e:
+            dashboard = None
+            engine.emit("WARN", "dashboard", f"Dashboard unavailable: {e}")
 
     stop = asyncio.Event()
 
@@ -97,6 +111,8 @@ async def run_session(cfg: dict, duration: float | None, register_path: str | No
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    if dashboard:
+        dashboard.stop()
 
     if register_path:
         engine.save_registry(register_path)
@@ -147,8 +163,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="scan for N seconds and save the observed equipment as the "
                              "trusted registry (baseline.json)")
     parser.add_argument("--disable", action="append", default=[],
-                        choices=["ble", "log", "proc", "net"],
-                        help="turn off a monitor (repeatable)")
+                        choices=["ble", "log", "proc", "net", "dash"],
+                        help="turn off a monitor or the dashboard (repeatable)")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="do not auto-open the dashboard in a browser")
+    parser.add_argument("--dashboard-port", type=int,
+                        help="dashboard port (default 8377, 127.0.0.1 only)")
     parser.add_argument("--zwift-log", help="override path to Zwift's Log.txt")
     parser.add_argument("--report-dir", help="directory for session reports")
     parser.add_argument("--verify-report", metavar="REPORT_JSON",
@@ -169,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg["zwift_log_path"] = args.zwift_log
     if args.report_dir:
         cfg["report_dir"] = args.report_dir
+    if args.dashboard_port:
+        cfg["dashboard_port"] = args.dashboard_port
 
     duration = args.duration
     register_path = None
@@ -184,7 +206,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f" Running for {duration:.0f} seconds...\n")
     else:
         print(" Running until Ctrl+C...\n")
-    return asyncio.run(run_session(cfg, duration, register_path, set(args.disable)))
+    return asyncio.run(run_session(cfg, duration, register_path, set(args.disable),
+                                   open_browser=not args.no_browser))
 
 
 if __name__ == "__main__":

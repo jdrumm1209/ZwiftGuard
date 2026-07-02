@@ -165,11 +165,48 @@ def test_zwift_log_parser() -> None:
         check(f"parses: {line[:50]}", matched == expected_kind)
 
 
+def test_state_snapshot() -> None:
+    print("dashboard state snapshot")
+    import json as _json
+    e = make_engine()
+    e.observe_ble("AA:BB:CC:00:00:01", "KICKR CORE 1234", -60, [], ["1818", "1826"])
+    e.observe_ble("DE:AD:BE:EF:00:02", "KICKR CORE 1234", -55, [], ["1818", "1826"])  # clone alert
+    e.observe_zwift_server("54.201.10.5", 443)
+    e.set_zwift_running(["ZwiftApp.exe"])
+    snap = e.state_snapshot()
+    _json.dumps(snap)  # must be JSON-serializable
+    check("snapshot serializes to JSON", True)
+    check("snapshot records zwift server endpoint", "54.201.10.5" in snap["zwift_servers"])
+    check("snapshot reflects zwift running", snap["zwift_running"])
+    statuses = {d["address"]: d["status"] for d in snap["devices"]}
+    check("cloned device is marked alert in snapshot",
+          statuses.get("DE:AD:BE:EF:00:02") == "alert" or statuses.get("AA:BB:CC:00:00:01") == "alert")
+
+
+def test_dashboard_server() -> None:
+    print("dashboard http server")
+    import urllib.request
+    from zwiftguard.dashboard import Dashboard
+    e = make_engine()
+    e.observe_ble("AA:BB:CC:00:00:01", "KICKR CORE 1234", -60, [], ["1826"])
+    dash = Dashboard(e, port=0)  # ephemeral port
+    url = dash.start()
+    try:
+        html = urllib.request.urlopen(url, timeout=5).read().decode("utf-8")
+        check("serves dashboard page", "ZwiftGuard" in html and "Equipment" in html)
+        import json as _json
+        state = _json.loads(urllib.request.urlopen(url + "state", timeout=5).read())
+        check("serves /state JSON with devices", len(state["devices"]) == 1)
+    finally:
+        dash.stop()
+
+
 def main() -> int:
     for fn in [test_clone_detection, test_identity_change, test_local_emulator,
                test_brand_mismatch, test_rssi_anomaly, test_ant_id_change,
                test_ghost_pairing, test_post_lock_and_baseline, test_loopback_and_arp,
-               test_registry_mismatch, test_hash_chain, test_zwift_log_parser]:
+               test_registry_mismatch, test_hash_chain, test_zwift_log_parser,
+               test_state_snapshot, test_dashboard_server]:
         fn()
     print(f"\n{PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0

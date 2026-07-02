@@ -95,6 +95,7 @@ class NetworkMonitor:
 
     def _poll_connections(self) -> None:
         procs = self._zwift_procs()
+        self.engine.set_zwift_running([p.info["name"] for p in procs])
         if procs and not self._zwift_seen:
             self._zwift_seen = True
             self.engine.emit("INFO", "net-monitor",
@@ -133,6 +134,7 @@ class NetworkMonitor:
                                                      mac=arp.get(ip_s, ""), is_loopback=False)
                 else:
                     self._public_peer_count += 1
+                    self.engine.observe_zwift_server(ip_s, c.raddr.port)
 
     # ----------------------------------------------------------------- run
 

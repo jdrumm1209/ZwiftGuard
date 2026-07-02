@@ -62,6 +62,9 @@ class IntegrityEngine:
         self._zwift_paired_names: set[str] = set()
         # network state
         self._ip_macs: dict[str, str] = {}
+        self.zwift_servers: dict[str, list[int]] = {}   # public endpoint ip -> ports
+        self.zwift_running: bool = False
+        self.zwift_process_list: list[str] = []
         # registered (trusted) equipment loaded from baseline.json
         self.registry: dict[str, dict[str, Any]] = {}
 
@@ -87,6 +90,12 @@ class IntegrityEngine:
             stamp = time.strftime("%H:%M:%S", time.localtime(ev.ts))
             print(f"{stamp} {color}[{severity:5s}]{_ANSI['END']} {rule:18s} {message}")
             sys.stdout.flush()
+            if severity == SEV_ALERT:
+                try:
+                    import winsound
+                    winsound.MessageBeep(winsound.MB_ICONHAND)
+                except Exception:
+                    pass
 
     # ---------------------------------------------------------------- registry
 
@@ -212,6 +221,17 @@ class IntegrityEngine:
             if not fp.mac:
                 fp.mac = mac.upper()
 
+    def observe_zwift_server(self, ip: str, port: int) -> None:
+        ports = self.zwift_servers.setdefault(ip, [])
+        if port not in ports:
+            ports.append(port)
+        self.emit(SEV_INFO, "net-monitor", f"Zwift server endpoint: {ip}:{port}",
+                  {"ip": ip, "port": port}, dedupe=f"srv:{ip}")
+
+    def set_zwift_running(self, names: list[str]) -> None:
+        self.zwift_running = bool(names)
+        self.zwift_process_list = names
+
     def observe_blocked_process(self, pid: int, name: str, exe: str, pattern: str) -> None:
         self.emit(SEV_ALERT, "R06-blocked-process",
                   f"Sensor emulator / bridge software running: {name} (pid {pid}, matched '{pattern}')",
@@ -334,6 +354,55 @@ class IntegrityEngine:
                       f"Session baseline locked with {len(names)} fitness device(s): {', '.join(names)}. "
                       f"Identity changes from here on are integrity violations.")
 
+    # -------------------------------------------------------------- dashboard
+
+    def state_snapshot(self) -> dict[str, Any]:
+        """Thread-safe-enough snapshot of live state for the web dashboard."""
+        counts = {SEV_INFO: 0, SEV_WARN: 0, SEV_ALERT: 0}
+        for e in self.events:
+            counts[e.severity] = counts.get(e.severity, 0) + 1
+        verdict = "CLEAN"
+        if counts[SEV_ALERT]:
+            verdict = "INTEGRITY VIOLATIONS DETECTED"
+        elif counts[SEV_WARN]:
+            verdict = "SUSPICIOUS - REVIEW WARNINGS"
+
+        # Per-device status: worst severity of any warning/alert that mentions it.
+        flagged: list[tuple[str, str]] = []
+        for e in list(self.events):
+            if e.severity in (SEV_WARN, SEV_ALERT):
+                blob = (json.dumps(e.evidence, default=str) + e.message).upper()
+                flagged.append((e.severity, blob))
+        devices = []
+        for fp in list(self.devices.values()):
+            status = "ok"
+            ident_up = fp.address.upper()
+            name_up = fp.name.upper() if fp.name else None
+            for sev, blob in flagged:
+                if ident_up in blob or (name_up and name_up in blob):
+                    if sev == SEV_ALERT:
+                        status = "alert"
+                        break
+                    status = "warn"
+            d = fp.to_dict()
+            d["status"] = status
+            devices.append(d)
+
+        return {
+            "session_id": self.session_id,
+            "started": self.started,
+            "now": now_ts(),
+            "verdict": verdict,
+            "severity_counts": counts,
+            "baseline_locked": self.baseline_locked,
+            "zwift_running": self.zwift_running,
+            "zwift_processes": list(self.zwift_process_list),
+            "zwift_servers": {ip: list(ports) for ip, ports in self.zwift_servers.items()},
+            "local_adapter_macs": sorted(self._local_adapter_macs),
+            "devices": devices,
+            "events": [e.to_dict() for e in list(self.events)[-200:]],
+        }
+
     # ----------------------------------------------------------------- report
 
     def build_report(self) -> dict[str, Any]:
@@ -357,6 +426,7 @@ class IntegrityEngine:
             "verdict": verdict,
             "severity_counts": counts,
             "rules_triggered": rules_hit,
+            "zwift_servers": {ip: list(ports) for ip, ports in self.zwift_servers.items()},
             "devices": [fp.to_dict() for fp in self.devices.values()],
             "events": [e.to_dict() for e in self.events],
             "final_hash": self._last_hash,

@@ -42,6 +42,42 @@ Every event is appended to a **hash-chained log** (each event's SHA-256 covers
 the previous event's hash), so a session report cannot be edited afterward
 without breaking verification.
 
+## How you are notified
+
+When ZwiftGuard starts, it opens a **live dashboard** in your browser at
+`http://127.0.0.1:8377` (local-only, nothing is exposed to the network). The
+dashboard shows the full data path from each piece of equipment to Zwift's
+servers:
+
+```
+EQUIPMENT                      THIS PC                    ZWIFT CLOUD
+┌──────────────────┐  → power · cadence  ┌────────────┐  → ride telemetry ┌──────────────┐
+│ Wahoo KICKR      │ ═══════════════════▶│ Zwift app  │═══════════════════▶│ server IPs   │
+│ BLE · MAC ED:4F… │ ◀───────────────────│ BT adapter │◀───────────────────│ : ports      │
+│ fingerprint 7d9… │  ← resistance (ERG) │ MAC 04:68… │  ← world state     └──────────────┘
+└──────────────────┘                     └────────────┘
+```
+
+Each device node shows its transport (BLE MAC / ANT+ ID / LAN IP + MAC),
+identity fingerprint, manufacturer IDs, and live signal strength, and is
+colored **green** (verified/unchanged), **amber** (suspicious — review), or
+**red, pulsing** (integrity violation). A live event feed runs underneath.
+
+Alert escalation, in order of loudness:
+
+1. **Dashboard**: the device node and verdict pill turn red and pulse; the
+   browser tab title changes to a red-dot alert.
+2. **Desktop notification**: click "Enable desktop alerts" once and every
+   ALERT raises a Windows notification via the browser, even when the
+   dashboard tab is in the background.
+3. **Sound**: the Windows error chime plays on every ALERT.
+4. **Console**: the colored terminal log (red ALERT lines).
+5. **After the ride**: the sealed JSON report and the process exit code
+   (`0` clean / `1` warnings / `2` alerts) for scripted/organizer use.
+
+Dashboard options: `--no-browser` (don't auto-open), `--dashboard-port N`,
+`--disable dash` (headless).
+
 ## Installation
 
 **Option A — standalone EXE (no Python required).**
